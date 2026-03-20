@@ -1,0 +1,13 @@
+{
+  "name": "@company/node-lib",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "test": "node --test",
+    "package": "npm pack --dry-run"
+  }
+}

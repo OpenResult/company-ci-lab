@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spring-api
+  template:
+    metadata:
+      labels:
+        app: spring-api
+    spec:
+      containers:
+        - name: spring-api
+          image: localhost:5000/spring-api:dev
+          ports:
+            - containerPort: 8080

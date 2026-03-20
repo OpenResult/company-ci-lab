@@ -1,0 +1,6 @@
+FROM node:20-alpine AS runtime
+WORKDIR /app
+COPY package.json ./
+COPY next.config.js ./
+COPY src ./src
+CMD ["node", "-e", "console.log('next-web container placeholder')"]
