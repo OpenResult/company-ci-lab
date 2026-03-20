@@ -1,0 +1,5 @@
+{
+  "title": "company-ci next-web",
+  "subtitle": "Thin workflows, real CLI orchestration.",
+  "description": "Node-focused scaffold that can render a static artifact offline while preserving a Next-style app layout."
+}
