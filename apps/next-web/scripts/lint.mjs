@@ -1,14 +1,4 @@
 import { readFileSync } from 'node:fs';
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-readFileSync(new URL('../src/app/page.tsx', import.meta.url));
-console.log('next-web lint placeholder passed');
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 
 const pageSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
 const siteConfig = JSON.parse(readFileSync(new URL('../src/config/site.json', import.meta.url), 'utf8'));
@@ -22,10 +12,3 @@ if (!siteConfig.subtitle.includes('CLI orchestration')) {
 }
 
 console.log(`next-web lint passed for ${siteConfig.title}`);
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs

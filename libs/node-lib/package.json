@@ -4,17 +4,6 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-  "files": ["dist"],
-  "scripts": {
-    "build": "node ./scripts/build.mjs",
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -24,15 +13,8 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "lint": "node ./scripts/lint.mjs",
-    "typecheck": "tsc --pretty false --noEmit -p tsconfig.json",
-    "build": "tsc --pretty false -p tsconfig.json",
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
+    "typecheck": "node ./scripts/typecheck.mjs",
+    "build": "node ./scripts/build.mjs",
     "test": "node --test",
     "package": "npm pack --dry-run"
   }

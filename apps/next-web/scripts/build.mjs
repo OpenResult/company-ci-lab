@@ -1,12 +1,3 @@
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-console.log('next-web build placeholder passed');
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const config = JSON.parse(readFileSync(new URL('../src/config/site.json', import.meta.url), 'utf8'));
@@ -32,10 +23,3 @@ const html = `<!doctype html>
 writeFileSync(new URL('../dist/index.html', import.meta.url), html);
 writeFileSync(new URL('../dist/build-manifest.json', import.meta.url), JSON.stringify({ generatedBy: 'company-ci scaffold', route: '/', title: config.title }, null, 2));
 console.log('next-web build produced dist/index.html and dist/build-manifest.json');
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
