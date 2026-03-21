@@ -12,9 +12,27 @@
 ## Repository layout
 
 - `tools/company-ci`: Rust CLI that owns orchestration.
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 - `apps/next-web`: minimal Next.js web application.
 - `apps/spring-api`: minimal Spring Boot API.
 - `libs/node-lib`: minimal TypeScript library.
+=======
+- `apps/next-web`: Node-focused web sample with a Next-style layout and offline-buildable static artifact.
+- `apps/spring-api`: minimal Spring Boot API.
+- `libs/node-lib`: real TypeScript library compiled with `tsc`.
+>>>>>>> theirs
+=======
+- `apps/next-web`: Node-focused web sample with a Next-style layout and offline-buildable static artifact.
+- `apps/spring-api`: minimal Spring Boot API.
+- `libs/node-lib`: real TypeScript library compiled with `tsc`.
+>>>>>>> theirs
+=======
+- `apps/next-web`: Node-focused web sample with a Next-style layout and offline-buildable static artifact.
+- `apps/spring-api`: minimal Spring Boot API.
+- `libs/node-lib`: real TypeScript library compiled with `tsc`.
+>>>>>>> theirs
 - `libs/java-lib`: minimal Java library.
 - `deploy/`: Kustomize-style deployment manifests.
 - `testbeds/`: local and emulated environment assets.
@@ -37,3 +55,26 @@ cargo run -p company-ci -- verify
 ```
 
 See `docs/architecture.md`, `docs/workflows.md`, `docs/local-dev.md`, and `docs/test-strategy.md` for detailed guidance.
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+
+## Current reality
+
+The Node slice is the most concrete path in the scaffold today:
+
+- `apps/next-web` lint/tests/build produce a static artifact in `dist/`.
+- `libs/node-lib` runs lint, typecheck, `tsc` build, tests against built output, and `npm pack --dry-run`.
+- `company-ci verify` exercises that Node path end-to-end.
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs

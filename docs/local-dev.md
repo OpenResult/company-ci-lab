@@ -35,3 +35,30 @@ For local experiments that mimic CI change detection, set `COMPANY_CI_CHANGED_FI
 ```bash
 COMPANY_CI_CHANGED_FILES=docs/architecture.md cargo run -p company-ci -- build --dry-run
 ```
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+
+
+## Node slice
+
+The most complete local path today is the Node slice:
+
+```bash
+cd apps/next-web && npm run lint && npm test && npm run build
+cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm test && npm run package
+```
+
+`libs/node-lib` uses the globally available `tsc` in this environment, so no npm registry access is required for the TypeScript compiler itself.
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs

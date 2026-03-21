@@ -155,10 +155,29 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
 
     if context.affects(Area::NodeLib) {
         steps.extend(match mode {
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
             Mode::Verify => vec![step("run node-lib checks", ["sh", "-c", "cd libs/node-lib && npm run build && npm test && npm run package"])],
             Mode::Build => vec![step("build node-lib", ["sh", "-c", "cd libs/node-lib && npm run build"])],
             Mode::Test => vec![step("test node-lib", ["sh", "-c", "cd libs/node-lib && npm test"])],
             Mode::Package => vec![step("package node-lib", ["sh", "-c", "cd libs/node-lib && npm run build && npm pack --dry-run"])],
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+            Mode::Verify => vec![step("run node-lib checks", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm test && npm run package"])],
+            Mode::Build => vec![step("build node-lib", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build"])],
+            Mode::Test => vec![step("test node-lib", ["sh", "-c", "cd libs/node-lib && npm run build && npm test"])],
+            Mode::Package => vec![step("package node-lib", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm pack --dry-run"])],
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
             Mode::Publish => vec![step("publish node-lib to npm-style repo", ["sh", "-c", "cd libs/node-lib && npm publish --registry ${NPM_REGISTRY_URL:-http://localhost:8081/repository/npm-hosted/} --dry-run"])],
         });
     }
