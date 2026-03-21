@@ -16,8 +16,8 @@
 ## Layer C: emulated platform
 
 - kind plus a local registry.
-- Nexus via Docker Compose for npm/Maven/image publication experiments.
-- `company-ci e2e emulated` owns startup, orchestration, health checks, and teardown sequencing.
+- Nexus via Docker Compose, with readiness checks and repo validation for the npm and Maven repositories the CLI expects.
+- `company-ci e2e emulated` owns startup, orchestration, local package publication, image push, deploy, live service checks, and teardown sequencing.
 
 ## Layer D: higher-fidelity OpenShift local
 

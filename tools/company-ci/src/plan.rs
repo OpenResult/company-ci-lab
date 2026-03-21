@@ -78,32 +78,44 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
     let mut required_tools = Vec::new();
     if context.affects(Area::NextWeb) {
         steps.push(step(
+            "build next-web image inputs",
+            ["sh", "-c", "cd apps/next-web && npm run build"],
+        ));
+        steps.push(step(
             "build next-web image",
             [
-                "podman",
-                "build",
-                "-f",
-                "apps/next-web/Containerfile",
-                "-t",
-                "localhost:5000/next-web:dev",
-                "apps/next-web",
+                "sh",
+                "-c",
+                "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && podman build -f apps/next-web/Containerfile -t ${image_ref} apps/next-web",
             ],
         ));
+        push_tool(&mut required_tools, "node");
+        push_tool(&mut required_tools, "npm");
         push_tool(&mut required_tools, "podman");
     }
     if context.affects(Area::SpringApi) {
         steps.push(step(
-            "build spring-api image",
+            "package spring-api image inputs",
             [
-                "podman",
-                "build",
+                "mvn",
+                "-B",
+                "-ntp",
                 "-f",
-                "apps/spring-api/Containerfile",
-                "-t",
-                "localhost:5000/spring-api:dev",
-                "apps/spring-api",
+                "apps/spring-api/pom.xml",
+                "-DskipTests",
+                "package",
             ],
         ));
+        steps.push(step(
+            "build spring-api image",
+            [
+                "sh",
+                "-c",
+                "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && podman build -f apps/spring-api/Containerfile -t ${image_ref} apps/spring-api",
+            ],
+        ));
+        push_tool(&mut required_tools, "java");
+        push_tool(&mut required_tools, "mvn");
         push_tool(&mut required_tools, "podman");
     }
     if steps.is_empty() {
@@ -118,14 +130,22 @@ pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
     if context.affects(Area::NextWeb) {
         steps.push(step(
             "push next-web image",
-            ["podman", "push", "localhost:5000/next-web:dev"],
+            [
+                "sh",
+                "-c",
+                "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && podman push --tls-verify=${COMPANY_CI_IMAGE_TLS_VERIFY:-false} ${image_ref}",
+            ],
         ));
         push_tool(&mut required_tools, "podman");
     }
     if context.affects(Area::SpringApi) {
         steps.push(step(
             "push spring-api image",
-            ["podman", "push", "localhost:5000/spring-api:dev"],
+            [
+                "sh",
+                "-c",
+                "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && podman push --tls-verify=${COMPANY_CI_IMAGE_TLS_VERIFY:-false} ${image_ref}",
+            ],
         ));
         push_tool(&mut required_tools, "podman");
     }
@@ -144,6 +164,22 @@ pub fn deploy_kubernetes_plan() -> Plan {
                 ["kubectl", "apply", "-k", "deploy/kind/overlays/ci"],
             ),
             step(
+                "set next-web image",
+                [
+                    "sh",
+                    "-c",
+                    "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && kubectl set image deployment/next-web next-web=${image_ref}",
+                ],
+            ),
+            step(
+                "set spring-api image",
+                [
+                    "sh",
+                    "-c",
+                    "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && kubectl set image deployment/spring-api spring-api=${image_ref}",
+                ],
+            ),
+            step(
                 "verify next-web rollout",
                 ["kubectl", "rollout", "status", "deployment/next-web"],
             ),
@@ -151,9 +187,33 @@ pub fn deploy_kubernetes_plan() -> Plan {
                 "verify spring-api rollout",
                 ["kubectl", "rollout", "status", "deployment/spring-api"],
             ),
+            step(
+                "check next-web homepage",
+                [
+                    "sh",
+                    "testbeds/kind/check-service.sh",
+                    "next-web",
+                    "18080",
+                    "80",
+                    "/",
+                    "company-ci next-web",
+                ],
+            ),
+            step(
+                "check spring-api health endpoint",
+                [
+                    "sh",
+                    "testbeds/kind/check-service.sh",
+                    "spring-api",
+                    "18081",
+                    "80",
+                    "/api/health",
+                    "ok",
+                ],
+            ),
         ],
     )
-    .with_required_tools(["kubectl"])
+    .with_required_tools(["kubectl", "curl"])
 }
 
 pub fn deploy_openshift_plan() -> Plan {
@@ -163,6 +223,22 @@ pub fn deploy_openshift_plan() -> Plan {
             step(
                 "apply openshift dev overlay",
                 ["oc", "apply", "-k", "deploy/openshift/overlays/dev"],
+            ),
+            step(
+                "set next-web image",
+                [
+                    "sh",
+                    "-c",
+                    "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && oc set image deployment/next-web next-web=${image_ref}",
+                ],
+            ),
+            step(
+                "set spring-api image",
+                [
+                    "sh",
+                    "-c",
+                    "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && oc set image deployment/spring-api spring-api=${image_ref}",
+                ],
             ),
             step(
                 "verify next-web rollout",
@@ -193,60 +269,33 @@ pub fn env_up_kind_plan() -> Plan {
             ),
             step(
                 "start local registry helper",
-                ["sh", "testbeds/kind/registry.sh"],
+                ["sh", "testbeds/kind/registry.sh", "up"],
             ),
         ],
     )
-    .with_required_tools(["kind"])
+    .with_required_tools(["kind", "docker", "kubectl"])
 }
 
 pub fn env_down_kind_plan() -> Plan {
     Plan::new(
         "env-down-kind",
-        vec![step("delete kind cluster", ["kind", "delete", "cluster"])],
+        vec![
+            step(
+                "delete kind cluster",
+                ["sh", "-c", "kind delete cluster || true"],
+            ),
+            step(
+                "stop local registry helper",
+                ["sh", "testbeds/kind/registry.sh", "down"],
+            ),
+        ],
     )
-    .with_required_tools(["kind"])
+    .with_required_tools(["kind", "docker"])
 }
 
 pub fn env_up_nexus_plan() -> Plan {
     Plan::new(
         "env-up-nexus",
-        vec![step(
-            "start nexus",
-            [
-                "docker",
-                "compose",
-                "-f",
-                "testbeds/repo/nexus/compose.yaml",
-                "up",
-                "-d",
-            ],
-        )],
-    )
-    .with_required_tools(["docker"])
-}
-
-pub fn env_down_nexus_plan() -> Plan {
-    Plan::new(
-        "env-down-nexus",
-        vec![step(
-            "stop nexus",
-            [
-                "docker",
-                "compose",
-                "-f",
-                "testbeds/repo/nexus/compose.yaml",
-                "down",
-                "-v",
-            ],
-        )],
-    )
-    .with_required_tools(["docker"])
-}
-
-pub fn e2e_emulated_plan() -> Plan {
-    Plan::new(
-        "e2e-emulated",
         vec![
             step(
                 "start nexus",
@@ -260,13 +309,66 @@ pub fn e2e_emulated_plan() -> Plan {
                 ],
             ),
             step(
+                "wait for nexus and capture runtime state",
+                ["sh", "testbeds/repo/nexus/bootstrap.sh"],
+            ),
+        ],
+    )
+    .with_required_tools(["docker", "curl"])
+}
+
+pub fn env_down_nexus_plan() -> Plan {
+    Plan::new(
+        "env-down-nexus",
+        vec![
+            step(
+                "stop nexus",
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "testbeds/repo/nexus/compose.yaml",
+                    "down",
+                    "-v",
+                ],
+            ),
+            step(
+                "remove nexus runtime state",
+                ["sh", "-c", "rm -rf testbeds/repo/nexus/.runtime"],
+            ),
+        ],
+    )
+    .with_required_tools(["docker"])
+}
+
+pub fn e2e_emulated_plan() -> Plan {
+    Plan::new(
+        "e2e-emulated",
+        vec![
+            step(
+                "start nexus",
+                [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "env",
+                    "up",
+                    "nexus",
+                ],
+            ),
+            step(
                 "create kind cluster",
                 [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "env",
+                    "up",
                     "kind",
-                    "create",
-                    "cluster",
-                    "--config",
-                    "testbeds/kind/cluster-config.yaml",
                 ],
             ),
             step(
@@ -301,22 +403,36 @@ pub fn e2e_emulated_plan() -> Plan {
                     "kubernetes",
                 ],
             ),
-            step("tear down kind", ["kind", "delete", "cluster"]),
+            step(
+                "tear down kind",
+                [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "env",
+                    "down",
+                    "kind",
+                ],
+            ),
             step(
                 "tear down nexus",
                 [
-                    "docker",
-                    "compose",
-                    "-f",
-                    "testbeds/repo/nexus/compose.yaml",
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "env",
                     "down",
-                    "-v",
+                    "nexus",
                 ],
             ),
         ],
     )
     .with_required_tools([
-        "cargo", "docker", "kind", "kubectl", "java", "mvn", "node", "npm", "podman",
+        "cargo", "curl", "docker", "kind", "kubectl", "java", "mvn", "node", "npm", "podman",
     ])
 }
 
@@ -441,18 +557,53 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
             Mode::Verify => vec![step("run node-lib checks", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm test && npm run package"])],
             Mode::Build => vec![step("build node-lib", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build"])],
             Mode::Test => vec![step("test node-lib", ["sh", "-c", "cd libs/node-lib && npm run build && npm test"])],
-            Mode::Package => vec![step("package node-lib", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm pack --dry-run"])],
-            Mode::Publish => vec![step("publish node-lib to npm-style repo", ["sh", "-c", "cd libs/node-lib && npm publish --registry ${NPM_REGISTRY_URL:-http://localhost:8081/repository/npm-hosted/} --dry-run"])],
+            Mode::Package => vec![step("package node-lib", ["sh", "-c", "mkdir -p target/node-packages && cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm pack --pack-destination ../../target/node-packages"])],
+            Mode::Publish => vec![step("publish node-lib to npm-style repo", ["sh", "testbeds/repo/nexus/npm-publish.sh", "libs/node-lib"])],
         });
     }
 
     if context.affects(Area::JavaLib) {
         steps.extend(match mode {
-            Mode::Verify => vec![step("verify java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "verify"])],
-            Mode::Build => vec![step("build java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "-DskipTests", "compile"])],
-            Mode::Test => vec![step("test java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "test"])],
-            Mode::Package => vec![step("package java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "-DskipTests", "package"])],
-            Mode::Publish => vec![step("publish java-lib to maven-style repo", ["sh", "-c", "repo_url=${MAVEN_DEPLOY_URL:-http://localhost:8081/repository/maven-snapshots/} && mvn -B -ntp -f libs/java-lib/pom.xml -DskipTests -DaltDeploymentRepository=local::default::${repo_url} deploy"])],
+            Mode::Verify => vec![step(
+                "verify java-lib",
+                ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "verify"],
+            )],
+            Mode::Build => vec![step(
+                "build java-lib",
+                [
+                    "mvn",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "libs/java-lib/pom.xml",
+                    "-DskipTests",
+                    "compile",
+                ],
+            )],
+            Mode::Test => vec![step(
+                "test java-lib",
+                ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "test"],
+            )],
+            Mode::Package => vec![step(
+                "package java-lib",
+                [
+                    "mvn",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "libs/java-lib/pom.xml",
+                    "-DskipTests",
+                    "package",
+                ],
+            )],
+            Mode::Publish => vec![step(
+                "publish java-lib to maven-style repo",
+                [
+                    "sh",
+                    "testbeds/repo/nexus/maven-deploy.sh",
+                    "libs/java-lib/pom.xml",
+                ],
+            )],
         });
     }
 
@@ -564,6 +715,7 @@ mod tests {
         let plan = e2e_emulated_plan();
         assert_eq!(plan.steps.first().unwrap().description, "start nexus");
         assert_eq!(plan.steps.last().unwrap().description, "tear down nexus");
+        assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
         assert!(plan.required_tools.iter().any(|tool| tool == "mvn"));
         assert!(plan.required_tools.iter().any(|tool| tool == "podman"));
     }
@@ -591,5 +743,15 @@ mod tests {
             plan.required_tools,
             vec!["java".to_string(), "mvn".to_string()]
         );
+    }
+
+    #[test]
+    fn deploy_kubernetes_plan_checks_live_services() {
+        let plan = deploy_kubernetes_plan();
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.description.contains("check next-web homepage")));
+        assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
     }
 }

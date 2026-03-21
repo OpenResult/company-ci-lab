@@ -1,6 +1,6 @@
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
-COPY package.json ./
-COPY next.config.js ./
-COPY src ./src
-CMD ["node", "-e", "console.log('next-web container placeholder')"]
+COPY dist ./dist
+COPY scripts/serve-dist.mjs ./scripts/serve-dist.mjs
+EXPOSE 3000
+CMD ["node", "./scripts/serve-dist.mjs"]

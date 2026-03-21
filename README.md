@@ -42,10 +42,9 @@ See `docs/architecture.md`, `docs/workflows.md`, `docs/local-dev.md`, and `docs/
 
 ## Current reality
 
-The most concrete paths in the scaffold today are the Node and Java verification lanes:
+The most concrete paths in the scaffold today are the verification lanes and the local emulated path:
 
 - `apps/next-web` lint/tests/build produce a static artifact in `dist/`.
-- `libs/node-lib` runs lint, contract type checks, build, tests against built output, and `npm pack --dry-run`.
+- `company-ci publish` now drives both `libs/node-lib` and `libs/java-lib` through the local Nexus helper path.
 - `apps/spring-api` runs real Maven verify/package flows with Spring Boot tests.
-- `libs/java-lib` runs real Maven verify/package/publish flows against a Maven-style target.
-- `company-ci verify` exercises both the Node and Java lanes end-to-end.
+- `company-ci e2e emulated` now brings up Nexus and kind helpers, pushes app images to a local registry, deploys to kind, and verifies live service responses.

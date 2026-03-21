@@ -2,3 +2,4 @@ target/
 **/dist/
 **/*.tgz
 **/target/
+testbeds/repo/nexus/.runtime/

@@ -17,3 +17,11 @@ spec:
           image: localhost:5000/spring-api:dev
           ports:
             - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080

@@ -2,11 +2,11 @@
 
 ## verify.yml
 
-Always-on workflow for `pull_request`, pushes to `main`, and `workflow_dispatch`. It builds `company-ci` from source, installs the language toolchains with setup actions, and runs `company-ci verify`. The CLI itself then verifies that the expected tools are present before it starts component work.
+Always-on workflow for `pull_request`, pushes to `main`, and `workflow_dispatch`. It builds `company-ci` from source, installs the language toolchains with setup actions, and runs `company-ci verify`. The workflow now uses the current `actions/checkout`, `actions/setup-node`, and `actions/setup-java` majors that are aligned with the Node 24 transition for JavaScript-based actions.
 
 ## emulated-e2e.yml
 
-Manual or scheduled workflow that installs the base toolchain and runs `company-ci e2e emulated`.
+Manual or scheduled workflow that installs the base toolchain and runs `company-ci e2e emulated`. The command now owns env bootstrap, library publication, image push, deploy, and post-rollout health checks.
 
 ## sandbox-deploy.yml
 

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "Usage: testbeds/repo/nexus/maven-deploy.sh <pom-path>" >&2
+  exit 1
+fi
+
+pom_path="$1"
+repo_url="${MAVEN_DEPLOY_URL:-${COMPANY_CI_NEXUS_URL:-http://localhost:8081}/repository/maven-snapshots/}"
+username="${COMPANY_CI_NEXUS_USERNAME:-admin}"
+password_file="${COMPANY_CI_NEXUS_PASSWORD_FILE:-testbeds/repo/nexus/.runtime/admin.password}"
+
+if [ -n "${MAVEN_SETTINGS_PATH:-}" ]; then
+  mvn -B -ntp -s "${MAVEN_SETTINGS_PATH}" -f "${pom_path}" -DskipTests -DaltDeploymentRepository=local::default::${repo_url} deploy
+  exit 0
+fi
+
+password="${COMPANY_CI_NEXUS_PASSWORD:-}"
+if [ -z "${password}" ] && [ -f "${password_file}" ]; then
+  password="$(tr -d '\r\n' < "${password_file}")"
+fi
+
+if [ -z "${password}" ]; then
+  echo "missing Nexus password; run company-ci env up nexus or set COMPANY_CI_NEXUS_PASSWORD/MAVEN_SETTINGS_PATH" >&2
+  exit 1
+fi
+
+work_dir="$(mktemp -d)"
+settings_file="${work_dir}/settings.xml"
+cleanup() {
+  rm -rf "${work_dir}"
+}
+trap cleanup EXIT
+
+cat >"${settings_file}" <<EOF
+<settings>
+  <servers>
+    <server>
+      <id>local</id>
+      <username>${username}</username>
+      <password>${password}</password>
+    </server>
+  </servers>
+</settings>
+EOF
+
+mvn -B -ntp -s "${settings_file}" -f "${pom_path}" -DskipTests -DaltDeploymentRepository=local::default::${repo_url} deploy
