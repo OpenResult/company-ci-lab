@@ -1,3 +1,4 @@
+use crate::container_engine::ContainerEngine;
 use crate::context::ExecutionContext;
 use crate::impact::Area;
 
@@ -76,22 +77,22 @@ pub fn publish_plan(context: &ExecutionContext) -> Plan {
 pub fn image_build_plan(context: &ExecutionContext) -> Plan {
     let mut steps = Vec::new();
     let mut required_tools = Vec::new();
+    let engine = context.container_engine;
     if context.affects(Area::NextWeb) {
         steps.push(step(
             "build next-web image inputs",
             ["sh", "-c", "cd apps/next-web && npm run build"],
         ));
-        steps.push(step(
+        steps.push(shell_step(
             "build next-web image",
-            [
-                "sh",
-                "-c",
-                "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && podman build -f apps/next-web/Containerfile -t ${image_ref} apps/next-web",
-            ],
+            &format!(
+                "image_ref=${{NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev}} && {} build -f apps/next-web/Containerfile -t ${{image_ref}} apps/next-web",
+                engine.binary()
+            ),
         ));
         push_tool(&mut required_tools, "node");
         push_tool(&mut required_tools, "npm");
-        push_tool(&mut required_tools, "podman");
+        push_tool(&mut required_tools, engine.binary());
     }
     if context.affects(Area::SpringApi) {
         steps.push(step(
@@ -106,17 +107,16 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
                 "package",
             ],
         ));
-        steps.push(step(
+        steps.push(shell_step(
             "build spring-api image",
-            [
-                "sh",
-                "-c",
-                "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && podman build -f apps/spring-api/Containerfile -t ${image_ref} apps/spring-api",
-            ],
+            &format!(
+                "image_ref=${{SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev}} && {} build -f apps/spring-api/Containerfile -t ${{image_ref}} apps/spring-api",
+                engine.binary()
+            ),
         ));
         push_tool(&mut required_tools, "java");
         push_tool(&mut required_tools, "mvn");
-        push_tool(&mut required_tools, "podman");
+        push_tool(&mut required_tools, engine.binary());
     }
     if steps.is_empty() {
         steps.push(noop_step("no impacted application images detected"));
@@ -127,27 +127,24 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
 pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
     let mut steps = Vec::new();
     let mut required_tools = Vec::new();
+    let engine = context.container_engine;
     if context.affects(Area::NextWeb) {
-        steps.push(step(
+        steps.push(shell_step(
             "push next-web image",
-            [
-                "sh",
-                "-c",
-                "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && podman push --tls-verify=${COMPANY_CI_IMAGE_TLS_VERIFY:-false} ${image_ref}",
-            ],
+            &image_push_command(engine, "NEXT_WEB_IMAGE_REF", "localhost:5001/next-web:dev"),
         ));
-        push_tool(&mut required_tools, "podman");
+        push_tool(&mut required_tools, engine.binary());
     }
     if context.affects(Area::SpringApi) {
-        steps.push(step(
+        steps.push(shell_step(
             "push spring-api image",
-            [
-                "sh",
-                "-c",
-                "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && podman push --tls-verify=${COMPANY_CI_IMAGE_TLS_VERIFY:-false} ${image_ref}",
-            ],
+            &image_push_command(
+                engine,
+                "SPRING_API_IMAGE_REF",
+                "localhost:5001/spring-api:dev",
+            ),
         ));
-        push_tool(&mut required_tools, "podman");
+        push_tool(&mut required_tools, engine.binary());
     }
     if steps.is_empty() {
         steps.push(noop_step("no impacted application images detected"));
@@ -155,7 +152,7 @@ pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
     Plan::new("image-publish", steps).with_required_tools(required_tools)
 }
 
-pub fn deploy_kubernetes_plan() -> Plan {
+pub fn deploy_kubernetes_plan(_context: &ExecutionContext) -> Plan {
     Plan::new(
         "deploy-kubernetes",
         vec![
@@ -216,7 +213,7 @@ pub fn deploy_kubernetes_plan() -> Plan {
     .with_required_tools(["kubectl", "curl"])
 }
 
-pub fn deploy_openshift_plan() -> Plan {
+pub fn deploy_openshift_plan(_context: &ExecutionContext) -> Plan {
     Plan::new(
         "deploy-openshift",
         vec![
@@ -253,95 +250,81 @@ pub fn deploy_openshift_plan() -> Plan {
     .with_required_tools(["oc"])
 }
 
-pub fn env_up_kind_plan() -> Plan {
+pub fn env_up_kind_plan(context: &ExecutionContext) -> Plan {
+    let create_cluster_command = kind_command(
+        context.container_engine,
+        "create cluster --config testbeds/kind/cluster-config.yaml",
+    );
     Plan::new(
         "env-up-kind",
         vec![
-            step(
-                "create kind cluster",
-                [
-                    "kind",
-                    "create",
-                    "cluster",
-                    "--config",
-                    "testbeds/kind/cluster-config.yaml",
-                ],
-            ),
+            shell_step("create kind cluster", &create_cluster_command),
             step(
                 "start local registry helper",
                 ["sh", "testbeds/kind/registry.sh", "up"],
             ),
         ],
     )
-    .with_required_tools(["kind", "docker", "kubectl"])
+    .with_required_tools(["kind", context.container_engine.binary(), "kubectl"])
 }
 
-pub fn env_down_kind_plan() -> Plan {
+pub fn env_down_kind_plan(context: &ExecutionContext) -> Plan {
+    let delete_cluster_command = format!(
+        "{} || true",
+        kind_command(context.container_engine, "delete cluster")
+    );
     Plan::new(
         "env-down-kind",
         vec![
-            step(
-                "delete kind cluster",
-                ["sh", "-c", "kind delete cluster || true"],
-            ),
+            shell_step("delete kind cluster", &delete_cluster_command),
             step(
                 "stop local registry helper",
                 ["sh", "testbeds/kind/registry.sh", "down"],
             ),
         ],
     )
-    .with_required_tools(["kind", "docker"])
+    .with_required_tools(["kind", context.container_engine.binary()])
 }
 
-pub fn env_up_nexus_plan() -> Plan {
+pub fn env_up_nexus_plan(context: &ExecutionContext) -> Plan {
+    let compose_up_command = compose_command(
+        context.container_engine,
+        "testbeds/repo/nexus/compose.yaml",
+        "up -d",
+    );
     Plan::new(
         "env-up-nexus",
         vec![
-            step(
-                "start nexus",
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    "testbeds/repo/nexus/compose.yaml",
-                    "up",
-                    "-d",
-                ],
-            ),
+            shell_step("start nexus", &compose_up_command),
             step(
                 "wait for nexus and capture runtime state",
                 ["sh", "testbeds/repo/nexus/bootstrap.sh"],
             ),
         ],
     )
-    .with_required_tools(["docker", "curl"])
+    .with_required_tools([context.container_engine.binary(), "curl"])
 }
 
-pub fn env_down_nexus_plan() -> Plan {
+pub fn env_down_nexus_plan(context: &ExecutionContext) -> Plan {
+    let compose_down_command = compose_command(
+        context.container_engine,
+        "testbeds/repo/nexus/compose.yaml",
+        "down -v",
+    );
     Plan::new(
         "env-down-nexus",
         vec![
-            step(
-                "stop nexus",
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    "testbeds/repo/nexus/compose.yaml",
-                    "down",
-                    "-v",
-                ],
-            ),
+            shell_step("stop nexus", &compose_down_command),
             step(
                 "remove nexus runtime state",
                 ["sh", "-c", "rm -rf testbeds/repo/nexus/.runtime"],
             ),
         ],
     )
-    .with_required_tools(["docker"])
+    .with_required_tools([context.container_engine.binary()])
 }
 
-pub fn e2e_emulated_plan() -> Plan {
+pub fn e2e_emulated_plan(context: &ExecutionContext) -> Plan {
     Plan::new(
         "e2e-emulated",
         vec![
@@ -432,11 +415,19 @@ pub fn e2e_emulated_plan() -> Plan {
         ],
     )
     .with_required_tools([
-        "cargo", "curl", "docker", "kind", "kubectl", "java", "mvn", "node", "npm", "podman",
+        "cargo",
+        "curl",
+        context.container_engine.binary(),
+        "kind",
+        "kubectl",
+        "java",
+        "mvn",
+        "node",
+        "npm",
     ])
 }
 
-pub fn e2e_openshift_local_plan() -> Plan {
+pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
     Plan::new(
         "e2e-openshift-local",
         vec![
@@ -466,7 +457,15 @@ pub fn e2e_openshift_local_plan() -> Plan {
             ),
         ],
     )
-    .with_required_tools(["cargo", "oc", "java", "mvn", "node", "npm", "podman"])
+    .with_required_tools([
+        "cargo",
+        "oc",
+        "java",
+        "mvn",
+        "node",
+        "npm",
+        context.container_engine.binary(),
+    ])
 }
 
 #[derive(Clone, Copy)]
@@ -655,6 +654,36 @@ fn noop_step(description: &str) -> Step {
     step(description, ["true"])
 }
 
+fn shell_step(description: &str, command: &str) -> Step {
+    step(description, ["sh", "-c", command])
+}
+
+fn kind_command(engine: ContainerEngine, operation: &str) -> String {
+    match engine.kind_provider_env() {
+        Some(provider_env) => format!("{provider_env} kind {operation}"),
+        None => format!("kind {operation}"),
+    }
+}
+
+fn compose_command(engine: ContainerEngine, compose_file: &str, operation: &str) -> String {
+    format!(
+        "{} compose -f {} {}",
+        engine.binary(),
+        compose_file,
+        operation
+    )
+}
+
+fn image_push_command(engine: ContainerEngine, image_env: &str, default_image_ref: &str) -> String {
+    let prefix = format!("image_ref=${{{image_env}:-{default_image_ref}}} && ");
+    match engine {
+        ContainerEngine::Docker => format!("{prefix}docker push ${{image_ref}}"),
+        ContainerEngine::Podman => format!(
+            "{prefix}podman push --tls-verify=${{COMPANY_CI_IMAGE_TLS_VERIFY:-false}} ${{image_ref}}"
+        ),
+    }
+}
+
 fn add_java_tools(tools: &mut Vec<&'static str>) {
     push_tool(tools, "java");
     push_tool(tools, "mvn");
@@ -684,6 +713,7 @@ mod tests {
 
     fn context(areas: &[Area]) -> ExecutionContext {
         ExecutionContext {
+            container_engine: ContainerEngine::Docker,
             impacted_areas: areas.to_vec(),
         }
     }
@@ -712,17 +742,18 @@ mod tests {
 
     #[test]
     fn e2e_emulated_plan_orders_environment_before_deploy() {
-        let plan = e2e_emulated_plan();
+        let plan = e2e_emulated_plan(&context(&[Area::Testbeds]));
         assert_eq!(plan.steps.first().unwrap().description, "start nexus");
         assert_eq!(plan.steps.last().unwrap().description, "tear down nexus");
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
         assert!(plan.required_tools.iter().any(|tool| tool == "mvn"));
-        assert!(plan.required_tools.iter().any(|tool| tool == "podman"));
+        assert!(plan.required_tools.iter().any(|tool| tool == "docker"));
     }
 
     #[test]
     fn build_plan_noops_when_nothing_is_impacted() {
         let plan = build_plan(&ExecutionContext {
+            container_engine: ContainerEngine::Docker,
             impacted_areas: vec![Area::Docs],
         });
         assert_eq!(
@@ -747,7 +778,7 @@ mod tests {
 
     #[test]
     fn deploy_kubernetes_plan_checks_live_services() {
-        let plan = deploy_kubernetes_plan();
+        let plan = deploy_kubernetes_plan(&context(&[Area::Deploy]));
         assert!(plan
             .steps
             .iter()

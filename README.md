@@ -38,6 +38,27 @@ cargo run -p company-ci -- verify
 
 Each top-level `company-ci` command also performs a required-tools preflight before it executes real work. GitHub Actions is still responsible for installing language runtimes and platform CLIs, but the Rust CLI verifies that the expected tools are actually on `PATH`.
 
+Containerized local workflows default to Docker and kind. Set `COMPANY_CI_CONTAINER_ENGINE=podman` if you want the same commands to target Podman instead.
+
+## Local setup
+
+Supported local hosts:
+
+- macOS
+- Windows through WSL2
+- Plain Windows shells are not supported.
+
+Install the required toolchain on the host before running non-dry-run `company-ci` commands:
+
+- Rust toolchain with `cargo`
+- Node.js 24 with `npm`
+- Java 17 with `mvn`
+- Docker plus `kind` and `kubectl` for the default emulated path
+- `act` only for local workflow smoke tests
+- `oc` only for the OpenShift Local path
+
+See `docs/local-dev.md` for concrete install steps on macOS and WSL.
+
 See `docs/architecture.md`, `docs/workflows.md`, `docs/local-dev.md`, and `docs/test-strategy.md` for detailed guidance.
 
 ## Current reality

@@ -15,7 +15,7 @@
 
 ## Layer C: emulated platform
 
-- kind plus a local registry.
+- kind plus a local registry, using Docker by default and Podman when `COMPANY_CI_CONTAINER_ENGINE=podman`.
 - Nexus via Docker Compose, with readiness checks and repo validation for the npm and Maven repositories the CLI expects.
 - `company-ci e2e emulated` owns startup, orchestration, local package publication, image push, deploy, live service checks, and teardown sequencing.
 

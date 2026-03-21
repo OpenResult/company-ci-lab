@@ -1,11 +1,123 @@
 # Local development
 
+## Supported local hosts
+
+This repo supports:
+
+- macOS
+- Windows through WSL2 with a Linux distro such as Ubuntu
+- Plain Windows shells are not supported
+
+Run the repo from the macOS terminal or from the Linux shell inside WSL. Do not run `company-ci` from PowerShell or Command Prompt.
+
+## Required tools
+
+- `cargo test` and all `company-ci` commands require a Rust toolchain with `cargo`.
+- Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 17 with Maven.
+- `company-ci env up nexus` requires `docker` by default or `podman` when `COMPANY_CI_CONTAINER_ENGINE=podman`, plus `curl`.
+- `company-ci env up kind`, `company-ci deploy kubernetes`, and `company-ci e2e emulated` require the selected container engine, `kind`, and `kubectl`.
+- `act` is only needed for local workflow smoke tests.
+- `oc` is only needed for `company-ci e2e openshift-local`.
+
+## Install required tools on macOS
+
+Homebrew plus Docker Desktop is the shortest path:
+
+```bash
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install rustup node@24 openjdk@17 maven kind kubectl
+brew install --cask docker
+rustup default stable
+```
+
+`node@24` and `openjdk@17` are versioned Homebrew formulae, so add them to your shell `PATH` if an older system version wins:
+
+```bash
+echo 'export JAVA_HOME="$(brew --prefix)/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"' >> ~/.zshrc
+echo 'export PATH="$(brew --prefix)/opt/node@24/bin:$JAVA_HOME/bin:$PATH"' >> ~/.zshrc
+```
+
+Open a new shell after the install, then confirm the toolchain:
+
+```bash
+cargo --version
+node --version
+npm --version
+java -version
+mvn --version
+docker version
+kind version
+kubectl version --client
+```
+
+Install `act` only if you want local workflow smoke tests:
+
+```bash
+brew install act
+```
+
+If you prefer Podman locally, install it separately and export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.
+
+## Install required tools in WSL2
+
+These examples assume Ubuntu under WSL2. Keep the repo checkout in the Linux filesystem and run commands from the Linux shell.
+
+Install the language toolchain inside WSL:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential ca-certificates curl git maven openjdk-17-jdk unzip zip
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm install 24
+nvm alias default 24
+. "$HOME/.cargo/env"
+```
+
+Install the cluster helpers inside WSL:
+
+```bash
+KIND_VERSION=v0.31.0
+curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/kubectl
+```
+
+For the default container engine, install Docker Desktop on Windows, enable the WSL 2 backend, and turn on WSL integration for the distro that holds this repo. `docker version` should succeed inside WSL before you run `company-ci env up kind` or `company-ci e2e emulated`.
+
+Verify the WSL toolchain:
+
+```bash
+. "$HOME/.cargo/env"
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+cargo --version
+node --version
+npm --version
+java -version
+mvn --version
+docker version
+kind version
+kubectl version --client
+```
+
+Install `act` and `oc` only if you need the optional workflow-smoke or OpenShift-local paths.
+
 ## Fast verification
 
 ```bash
 ./scripts/bootstrap.sh
 ./scripts/dev-verify.sh
 ```
+
+The default local model is Docker Desktop plus kind. `company-ci` assumes `docker` unless `COMPANY_CI_CONTAINER_ENGINE=podman` is set.
 
 ## Run the Rust CLI directly
 
@@ -53,4 +165,4 @@ cargo run -p company-ci -- env up nexus
 cargo run -p company-ci -- env up kind
 ```
 
-`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses direct Maven goals through `company-ci`, and the emulated path now captures Nexus runtime credentials in `testbeds/repo/nexus/.runtime/` so later publish steps can reuse them without extra workflow logic.
+`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses direct Maven goals through `company-ci`, and the emulated path now captures Nexus runtime credentials in `testbeds/repo/nexus/.runtime/` so later publish steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.

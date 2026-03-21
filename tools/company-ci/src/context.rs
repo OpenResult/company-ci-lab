@@ -1,13 +1,16 @@
+use crate::container_engine::ContainerEngine;
+use crate::error::CompanyCiError;
 use crate::impact::{infer_areas, Area};
 use std::env;
 
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
+    pub container_engine: ContainerEngine,
     pub impacted_areas: Vec<Area>,
 }
 
 impl ExecutionContext {
-    pub fn detect() -> Self {
+    pub fn detect() -> Result<Self, CompanyCiError> {
         let changed_files = env::var("COMPANY_CI_CHANGED_FILES")
             .ok()
             .map(|value| {
@@ -37,7 +40,10 @@ impl ExecutionContext {
         };
 
         let _ = changed_files;
-        Self { impacted_areas }
+        Ok(Self {
+            container_engine: ContainerEngine::detect()?,
+            impacted_areas,
+        })
     }
 
     pub fn affects(&self, area: Area) -> bool {
@@ -52,6 +58,7 @@ mod tests {
     #[test]
     fn affects_everything_when_no_changed_files_are_supplied() {
         let context = ExecutionContext {
+            container_engine: ContainerEngine::Docker,
             impacted_areas: vec![
                 Area::NextWeb,
                 Area::SpringApi,
