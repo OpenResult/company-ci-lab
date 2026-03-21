@@ -9,6 +9,7 @@ fn verify_dry_run_prints_planned_steps() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[dry-run] verify required tool: java"));
     assert!(stdout.contains("[dry-run] run next-web quality checks"));
 }
 

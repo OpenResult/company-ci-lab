@@ -9,7 +9,8 @@ GitHub Actions only performs checkout, language/tool setup, cache preparation, a
 `tools/company-ci` separates pure planning from command execution:
 
 - `plan.rs` builds ordered command plans for each subcommand.
-- `runner.rs` abstracts side effects so unit tests can verify planning without shelling out.
+- Each plan declares the external tools it requires so the CLI can fail fast on missing `mvn`, `node`, `podman`, `oc`, and similar binaries.
+- `runner.rs` abstracts side effects so unit tests can verify planning without shelling out, and performs tool preflight before non-dry-run execution.
 - `commands.rs` maps CLI inputs to plans.
 
 ## Monorepo conventions

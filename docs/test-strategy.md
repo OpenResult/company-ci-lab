@@ -3,6 +3,7 @@
 ## Layer A: fast local checks
 
 - Rust unit tests for command planning and runner behavior.
+- CLI tool-preflight checks for required binaries before non-dry-run execution.
 - Node app and library lint/test/build scripts.
 - Java app and library unit tests.
 - Manifest rendering and file existence checks routed through `company-ci verify`.

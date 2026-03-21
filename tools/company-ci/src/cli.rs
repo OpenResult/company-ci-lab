@@ -80,7 +80,9 @@ fn parse_command(args: &[String]) -> Result<Command, CompanyCiError> {
         "env" => parse_env_command(&args[1..]),
         "e2e" => parse_e2e_command(&args[1..]),
         "help" | "--help" | "-h" => Err(CompanyCiError::Usage(usage())),
-        other => Err(CompanyCiError::InvalidArgument(format!("unknown command: {other}"))),
+        other => Err(CompanyCiError::InvalidArgument(format!(
+            "unknown command: {other}"
+        ))),
     }
 }
 
@@ -92,7 +94,9 @@ fn parse_image_command(args: &[String]) -> Result<Command, CompanyCiError> {
     match subcommand {
         "build" => Ok(Command::Image(ImageCommand::Build(parsed))),
         "publish" => Ok(Command::Image(ImageCommand::Publish(parsed))),
-        other => Err(CompanyCiError::InvalidArgument(format!("unknown image command: {other}"))),
+        other => Err(CompanyCiError::InvalidArgument(format!(
+            "unknown image command: {other}"
+        ))),
     }
 }
 
@@ -104,7 +108,9 @@ fn parse_deploy_command(args: &[String]) -> Result<Command, CompanyCiError> {
     match subcommand {
         "kubernetes" => Ok(Command::Deploy(DeployCommand::Kubernetes(parsed))),
         "openshift" => Ok(Command::Deploy(DeployCommand::Openshift(parsed))),
-        other => Err(CompanyCiError::InvalidArgument(format!("unknown deploy command: {other}"))),
+        other => Err(CompanyCiError::InvalidArgument(format!(
+            "unknown deploy command: {other}"
+        ))),
     }
 }
 
@@ -116,13 +122,19 @@ fn parse_env_command(args: &[String]) -> Result<Command, CompanyCiError> {
     let target = match args[1].as_str() {
         "kind" => EnvironmentTarget::Kind,
         "nexus" => EnvironmentTarget::Nexus,
-        other => return Err(CompanyCiError::InvalidArgument(format!("unknown env target: {other}"))),
+        other => {
+            return Err(CompanyCiError::InvalidArgument(format!(
+                "unknown env target: {other}"
+            )))
+        }
     };
     let parsed = parse_execution_args(&args[2..])?;
     match action {
         "up" => Ok(Command::Env(EnvCommand::Up(target, parsed))),
         "down" => Ok(Command::Env(EnvCommand::Down(target, parsed))),
-        other => Err(CompanyCiError::InvalidArgument(format!("unknown env action: {other}"))),
+        other => Err(CompanyCiError::InvalidArgument(format!(
+            "unknown env action: {other}"
+        ))),
     }
 }
 
@@ -134,7 +146,9 @@ fn parse_e2e_command(args: &[String]) -> Result<Command, CompanyCiError> {
     match subcommand {
         "emulated" => Ok(Command::E2e(E2eCommand::Emulated(parsed))),
         "openshift-local" => Ok(Command::E2e(E2eCommand::OpenshiftLocal(parsed))),
-        other => Err(CompanyCiError::InvalidArgument(format!("unknown e2e command: {other}"))),
+        other => Err(CompanyCiError::InvalidArgument(format!(
+            "unknown e2e command: {other}"
+        ))),
     }
 }
 
@@ -143,7 +157,11 @@ fn parse_execution_args(args: &[String]) -> Result<ExecutionArgs, CompanyCiError
     for arg in args {
         match arg.as_str() {
             "--dry-run" => dry_run = true,
-            other => return Err(CompanyCiError::InvalidArgument(format!("unknown argument: {other}"))),
+            other => {
+                return Err(CompanyCiError::InvalidArgument(format!(
+                    "unknown argument: {other}"
+                )))
+            }
         }
     }
     Ok(ExecutionArgs { dry_run })

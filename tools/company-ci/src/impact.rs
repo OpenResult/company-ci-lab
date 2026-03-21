@@ -52,7 +52,10 @@ fn classify_path(path: &str) -> Vec<Area> {
     if path.starts_with("testbeds/") || path.starts_with("scripts/") {
         areas.push(Area::Testbeds);
     }
-    if path.starts_with(".github/workflows/") || path.starts_with(".github/ISSUE_TEMPLATE/") || path == ".github/pull_request_template.md" {
+    if path.starts_with(".github/workflows/")
+        || path.starts_with(".github/ISSUE_TEMPLATE/")
+        || path == ".github/pull_request_template.md"
+    {
         areas.push(Area::Workflows);
     }
     areas

@@ -2,7 +2,7 @@
 
 ## verify.yml
 
-Always-on workflow for `pull_request`, pushes to `main`, and `workflow_dispatch`. It builds `company-ci` from source and runs `company-ci verify`.
+Always-on workflow for `pull_request`, pushes to `main`, and `workflow_dispatch`. It builds `company-ci` from source, installs the language toolchains with setup actions, and runs `company-ci verify`. The CLI itself then verifies that the expected tools are present before it starts component work.
 
 ## emulated-e2e.yml
 
@@ -10,7 +10,7 @@ Manual or scheduled workflow that installs the base toolchain and runs `company-
 
 ## sandbox-deploy.yml
 
-Manual deployment entry point for an external sandbox. The workflow remains thin and passes deployment intent to `company-ci`.
+Manual deployment entry point for an external sandbox. The workflow remains thin and passes deployment intent to `company-ci`; any required platform tooling is expected from the runner image or setup steps.
 
 ## release-company-ci.yml
 

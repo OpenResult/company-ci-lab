@@ -10,146 +10,429 @@ pub struct Step {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     pub name: String,
+    pub required_tools: Vec<String>,
     pub steps: Vec<Step>,
 }
 
 impl Plan {
     pub fn new(name: impl Into<String>, steps: Vec<Step>) -> Self {
-        Self { name: name.into(), steps }
+        Self {
+            name: name.into(),
+            required_tools: Vec::new(),
+            steps,
+        }
+    }
+
+    pub fn with_required_tools<I, S>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for tool in tools {
+            let tool = tool.into();
+            if !self.required_tools.contains(&tool) {
+                self.required_tools.push(tool);
+            }
+        }
+        self
     }
 }
 
 pub fn verify_plan(context: &ExecutionContext) -> Plan {
     let mut steps = vec![
-        step("validate deployment manifests exist", ["test", "-f", "deploy/base/next-web/kustomization.yaml"]),
-        step("validate spring api containerfile exists", ["test", "-f", "apps/spring-api/Containerfile"]),
+        step(
+            "validate deployment manifests exist",
+            ["test", "-f", "deploy/base/next-web/kustomization.yaml"],
+        ),
+        step(
+            "validate spring api containerfile exists",
+            ["test", "-f", "apps/spring-api/Containerfile"],
+        ),
     ];
     steps.extend(component_steps(context, Mode::Verify));
-    Plan::new("verify", steps)
+    Plan::new("verify", steps).with_required_tools(component_required_tools(context, Mode::Verify))
 }
 
 pub fn build_plan(context: &ExecutionContext) -> Plan {
     Plan::new("build", component_steps(context, Mode::Build))
+        .with_required_tools(component_required_tools(context, Mode::Build))
 }
 
 pub fn test_plan(context: &ExecutionContext) -> Plan {
     Plan::new("test", component_steps(context, Mode::Test))
+        .with_required_tools(component_required_tools(context, Mode::Test))
 }
 
 pub fn package_plan(context: &ExecutionContext) -> Plan {
     Plan::new("package", component_steps(context, Mode::Package))
+        .with_required_tools(component_required_tools(context, Mode::Package))
 }
 
 pub fn publish_plan(context: &ExecutionContext) -> Plan {
     Plan::new("publish", component_steps(context, Mode::Publish))
+        .with_required_tools(component_required_tools(context, Mode::Publish))
 }
 
 pub fn image_build_plan(context: &ExecutionContext) -> Plan {
     let mut steps = Vec::new();
+    let mut required_tools = Vec::new();
     if context.affects(Area::NextWeb) {
-        steps.push(step("build next-web image", ["podman", "build", "-f", "apps/next-web/Containerfile", "-t", "localhost:5000/next-web:dev", "apps/next-web"]));
+        steps.push(step(
+            "build next-web image",
+            [
+                "podman",
+                "build",
+                "-f",
+                "apps/next-web/Containerfile",
+                "-t",
+                "localhost:5000/next-web:dev",
+                "apps/next-web",
+            ],
+        ));
+        push_tool(&mut required_tools, "podman");
     }
     if context.affects(Area::SpringApi) {
-        steps.push(step("build spring-api image", ["podman", "build", "-f", "apps/spring-api/Containerfile", "-t", "localhost:5000/spring-api:dev", "apps/spring-api"]));
+        steps.push(step(
+            "build spring-api image",
+            [
+                "podman",
+                "build",
+                "-f",
+                "apps/spring-api/Containerfile",
+                "-t",
+                "localhost:5000/spring-api:dev",
+                "apps/spring-api",
+            ],
+        ));
+        push_tool(&mut required_tools, "podman");
     }
     if steps.is_empty() {
         steps.push(noop_step("no impacted application images detected"));
     }
-    Plan::new("image-build", steps)
+    Plan::new("image-build", steps).with_required_tools(required_tools)
 }
 
 pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
     let mut steps = Vec::new();
+    let mut required_tools = Vec::new();
     if context.affects(Area::NextWeb) {
-        steps.push(step("push next-web image", ["podman", "push", "localhost:5000/next-web:dev"]));
+        steps.push(step(
+            "push next-web image",
+            ["podman", "push", "localhost:5000/next-web:dev"],
+        ));
+        push_tool(&mut required_tools, "podman");
     }
     if context.affects(Area::SpringApi) {
-        steps.push(step("push spring-api image", ["podman", "push", "localhost:5000/spring-api:dev"]));
+        steps.push(step(
+            "push spring-api image",
+            ["podman", "push", "localhost:5000/spring-api:dev"],
+        ));
+        push_tool(&mut required_tools, "podman");
     }
     if steps.is_empty() {
         steps.push(noop_step("no impacted application images detected"));
     }
-    Plan::new("image-publish", steps)
+    Plan::new("image-publish", steps).with_required_tools(required_tools)
 }
 
 pub fn deploy_kubernetes_plan() -> Plan {
-    Plan::new("deploy-kubernetes", vec![
-        step("apply kind overlay", ["kubectl", "apply", "-k", "deploy/kind/overlays/ci"]),
-        step("verify next-web rollout", ["kubectl", "rollout", "status", "deployment/next-web"]),
-        step("verify spring-api rollout", ["kubectl", "rollout", "status", "deployment/spring-api"]),
-    ])
+    Plan::new(
+        "deploy-kubernetes",
+        vec![
+            step(
+                "apply kind overlay",
+                ["kubectl", "apply", "-k", "deploy/kind/overlays/ci"],
+            ),
+            step(
+                "verify next-web rollout",
+                ["kubectl", "rollout", "status", "deployment/next-web"],
+            ),
+            step(
+                "verify spring-api rollout",
+                ["kubectl", "rollout", "status", "deployment/spring-api"],
+            ),
+        ],
+    )
+    .with_required_tools(["kubectl"])
 }
 
 pub fn deploy_openshift_plan() -> Plan {
-    Plan::new("deploy-openshift", vec![
-        step("apply openshift dev overlay", ["oc", "apply", "-k", "deploy/openshift/overlays/dev"]),
-        step("verify next-web rollout", ["oc", "rollout", "status", "deployment/next-web"]),
-        step("verify spring-api rollout", ["oc", "rollout", "status", "deployment/spring-api"]),
-    ])
+    Plan::new(
+        "deploy-openshift",
+        vec![
+            step(
+                "apply openshift dev overlay",
+                ["oc", "apply", "-k", "deploy/openshift/overlays/dev"],
+            ),
+            step(
+                "verify next-web rollout",
+                ["oc", "rollout", "status", "deployment/next-web"],
+            ),
+            step(
+                "verify spring-api rollout",
+                ["oc", "rollout", "status", "deployment/spring-api"],
+            ),
+        ],
+    )
+    .with_required_tools(["oc"])
 }
 
 pub fn env_up_kind_plan() -> Plan {
-    Plan::new("env-up-kind", vec![
-        step("create kind cluster", ["kind", "create", "cluster", "--config", "testbeds/kind/cluster-config.yaml"]),
-        step("start local registry helper", ["sh", "testbeds/kind/registry.sh"]),
-    ])
+    Plan::new(
+        "env-up-kind",
+        vec![
+            step(
+                "create kind cluster",
+                [
+                    "kind",
+                    "create",
+                    "cluster",
+                    "--config",
+                    "testbeds/kind/cluster-config.yaml",
+                ],
+            ),
+            step(
+                "start local registry helper",
+                ["sh", "testbeds/kind/registry.sh"],
+            ),
+        ],
+    )
+    .with_required_tools(["kind"])
 }
 
 pub fn env_down_kind_plan() -> Plan {
-    Plan::new("env-down-kind", vec![step("delete kind cluster", ["kind", "delete", "cluster"])])
+    Plan::new(
+        "env-down-kind",
+        vec![step("delete kind cluster", ["kind", "delete", "cluster"])],
+    )
+    .with_required_tools(["kind"])
 }
 
 pub fn env_up_nexus_plan() -> Plan {
-    Plan::new("env-up-nexus", vec![step("start nexus", ["docker", "compose", "-f", "testbeds/repo/nexus/compose.yaml", "up", "-d"])])
+    Plan::new(
+        "env-up-nexus",
+        vec![step(
+            "start nexus",
+            [
+                "docker",
+                "compose",
+                "-f",
+                "testbeds/repo/nexus/compose.yaml",
+                "up",
+                "-d",
+            ],
+        )],
+    )
+    .with_required_tools(["docker"])
 }
 
 pub fn env_down_nexus_plan() -> Plan {
-    Plan::new("env-down-nexus", vec![step("stop nexus", ["docker", "compose", "-f", "testbeds/repo/nexus/compose.yaml", "down", "-v"])])
+    Plan::new(
+        "env-down-nexus",
+        vec![step(
+            "stop nexus",
+            [
+                "docker",
+                "compose",
+                "-f",
+                "testbeds/repo/nexus/compose.yaml",
+                "down",
+                "-v",
+            ],
+        )],
+    )
+    .with_required_tools(["docker"])
 }
 
 pub fn e2e_emulated_plan() -> Plan {
-    Plan::new("e2e-emulated", vec![
-        step("start nexus", ["docker", "compose", "-f", "testbeds/repo/nexus/compose.yaml", "up", "-d"]),
-        step("create kind cluster", ["kind", "create", "cluster", "--config", "testbeds/kind/cluster-config.yaml"]),
-        step("verify all components", ["cargo", "run", "-p", "company-ci", "--", "verify"]),
-        step("package artifacts", ["cargo", "run", "-p", "company-ci", "--", "package"]),
-        step("publish libraries", ["cargo", "run", "-p", "company-ci", "--", "publish"]),
-        step("build images", ["cargo", "run", "-p", "company-ci", "--", "image", "build"]),
-        step("publish images", ["cargo", "run", "-p", "company-ci", "--", "image", "publish"]),
-        step("deploy to kind", ["cargo", "run", "-p", "company-ci", "--", "deploy", "kubernetes"]),
-        step("tear down kind", ["kind", "delete", "cluster"]),
-        step("tear down nexus", ["docker", "compose", "-f", "testbeds/repo/nexus/compose.yaml", "down", "-v"]),
+    Plan::new(
+        "e2e-emulated",
+        vec![
+            step(
+                "start nexus",
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "testbeds/repo/nexus/compose.yaml",
+                    "up",
+                    "-d",
+                ],
+            ),
+            step(
+                "create kind cluster",
+                [
+                    "kind",
+                    "create",
+                    "cluster",
+                    "--config",
+                    "testbeds/kind/cluster-config.yaml",
+                ],
+            ),
+            step(
+                "verify all components",
+                ["cargo", "run", "-p", "company-ci", "--", "verify"],
+            ),
+            step(
+                "package artifacts",
+                ["cargo", "run", "-p", "company-ci", "--", "package"],
+            ),
+            step(
+                "publish libraries",
+                ["cargo", "run", "-p", "company-ci", "--", "publish"],
+            ),
+            step(
+                "build images",
+                ["cargo", "run", "-p", "company-ci", "--", "image", "build"],
+            ),
+            step(
+                "publish images",
+                ["cargo", "run", "-p", "company-ci", "--", "image", "publish"],
+            ),
+            step(
+                "deploy to kind",
+                [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "deploy",
+                    "kubernetes",
+                ],
+            ),
+            step("tear down kind", ["kind", "delete", "cluster"]),
+            step(
+                "tear down nexus",
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "testbeds/repo/nexus/compose.yaml",
+                    "down",
+                    "-v",
+                ],
+            ),
+        ],
+    )
+    .with_required_tools([
+        "cargo", "docker", "kind", "kubectl", "java", "mvn", "node", "npm", "podman",
     ])
 }
 
 pub fn e2e_openshift_local_plan() -> Plan {
-    Plan::new("e2e-openshift-local", vec![
-        step("assume OpenShift Local login", ["sh", "testbeds/openshift-local/scripts/login.sh"]),
-        step("verify all components", ["cargo", "run", "-p", "company-ci", "--", "verify"]),
-        step("build images", ["cargo", "run", "-p", "company-ci", "--", "image", "build"]),
-        step("deploy openshift overlays", ["cargo", "run", "-p", "company-ci", "--", "deploy", "openshift"]),
-    ])
+    Plan::new(
+        "e2e-openshift-local",
+        vec![
+            step(
+                "assume OpenShift Local login",
+                ["sh", "testbeds/openshift-local/scripts/login.sh"],
+            ),
+            step(
+                "verify all components",
+                ["cargo", "run", "-p", "company-ci", "--", "verify"],
+            ),
+            step(
+                "build images",
+                ["cargo", "run", "-p", "company-ci", "--", "image", "build"],
+            ),
+            step(
+                "deploy openshift overlays",
+                [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "deploy",
+                    "openshift",
+                ],
+            ),
+        ],
+    )
+    .with_required_tools(["cargo", "oc", "java", "mvn", "node", "npm", "podman"])
 }
 
 #[derive(Clone, Copy)]
-enum Mode { Verify, Build, Test, Package, Publish }
+enum Mode {
+    Verify,
+    Build,
+    Test,
+    Package,
+    Publish,
+}
 
 fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
     let mut steps = Vec::new();
 
     if context.affects(Area::NextWeb) {
         steps.extend(match mode {
-            Mode::Verify => vec![step("run next-web quality checks", ["sh", "-c", "cd apps/next-web && npm run lint && npm test && npm run build"])],
-            Mode::Build => vec![step("build next-web", ["sh", "-c", "cd apps/next-web && npm run build"])],
-            Mode::Test => vec![step("test next-web", ["sh", "-c", "cd apps/next-web && npm test"])],
-            Mode::Package | Mode::Publish => vec![noop_step("next-web packaging/publishing is handled through image commands")],
+            Mode::Verify => vec![step(
+                "run next-web quality checks",
+                [
+                    "sh",
+                    "-c",
+                    "cd apps/next-web && npm run lint && npm test && npm run build",
+                ],
+            )],
+            Mode::Build => vec![step(
+                "build next-web",
+                ["sh", "-c", "cd apps/next-web && npm run build"],
+            )],
+            Mode::Test => vec![step(
+                "test next-web",
+                ["sh", "-c", "cd apps/next-web && npm test"],
+            )],
+            Mode::Package | Mode::Publish => vec![noop_step(
+                "next-web packaging/publishing is handled through image commands",
+            )],
         });
     }
 
     if context.affects(Area::SpringApi) {
         steps.extend(match mode {
-            Mode::Verify | Mode::Build | Mode::Test | Mode::Package => vec![step("run spring-api scaffold checks", ["sh", "-c", "cd apps/spring-api && ./ci/verify.sh"])],
-            Mode::Publish => vec![noop_step("spring-api publishing is handled through image commands")],
+            Mode::Verify => vec![step(
+                "verify spring-api",
+                [
+                    "mvn",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "apps/spring-api/pom.xml",
+                    "verify",
+                ],
+            )],
+            Mode::Build => vec![step(
+                "build spring-api",
+                [
+                    "mvn",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "apps/spring-api/pom.xml",
+                    "-DskipTests",
+                    "compile",
+                ],
+            )],
+            Mode::Test => vec![step(
+                "test spring-api",
+                ["mvn", "-B", "-ntp", "-f", "apps/spring-api/pom.xml", "test"],
+            )],
+            Mode::Package => vec![step(
+                "package spring-api",
+                [
+                    "mvn",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "apps/spring-api/pom.xml",
+                    "-DskipTests",
+                    "package",
+                ],
+            )],
+            Mode::Publish => vec![noop_step(
+                "spring-api publishing is handled through image commands",
+            )],
         });
     }
 
@@ -165,7 +448,11 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
 
     if context.affects(Area::JavaLib) {
         steps.extend(match mode {
-            Mode::Verify | Mode::Build | Mode::Test | Mode::Package | Mode::Publish => vec![step("run java-lib scaffold checks", ["sh", "-c", "cd libs/java-lib && ./ci/verify.sh"])],
+            Mode::Verify => vec![step("verify java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "verify"])],
+            Mode::Build => vec![step("build java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "-DskipTests", "compile"])],
+            Mode::Test => vec![step("test java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "test"])],
+            Mode::Package => vec![step("package java-lib", ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "-DskipTests", "package"])],
+            Mode::Publish => vec![step("publish java-lib to maven-style repo", ["sh", "-c", "repo_url=${MAVEN_DEPLOY_URL:-http://localhost:8081/repository/maven-snapshots/} && mvn -B -ntp -f libs/java-lib/pom.xml -DskipTests -DaltDeploymentRepository=local::default::${repo_url} deploy"])],
         });
     }
 
@@ -176,12 +463,68 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
     steps
 }
 
+fn component_required_tools(context: &ExecutionContext, mode: Mode) -> Vec<&'static str> {
+    let mut tools = Vec::new();
+
+    if context.affects(Area::NextWeb) && matches!(mode, Mode::Verify | Mode::Build | Mode::Test) {
+        add_node_tools(&mut tools);
+    }
+
+    if context.affects(Area::SpringApi)
+        && matches!(
+            mode,
+            Mode::Verify | Mode::Build | Mode::Test | Mode::Package
+        )
+    {
+        add_java_tools(&mut tools);
+    }
+
+    if context.affects(Area::NodeLib)
+        && matches!(
+            mode,
+            Mode::Verify | Mode::Build | Mode::Test | Mode::Package | Mode::Publish
+        )
+    {
+        add_node_tools(&mut tools);
+    }
+
+    if context.affects(Area::JavaLib)
+        && matches!(
+            mode,
+            Mode::Verify | Mode::Build | Mode::Test | Mode::Package | Mode::Publish
+        )
+    {
+        add_java_tools(&mut tools);
+    }
+
+    tools
+}
+
 fn noop_step(description: &str) -> Step {
     step(description, ["true"])
 }
 
+fn add_java_tools(tools: &mut Vec<&'static str>) {
+    push_tool(tools, "java");
+    push_tool(tools, "mvn");
+}
+
+fn add_node_tools(tools: &mut Vec<&'static str>) {
+    push_tool(tools, "node");
+    push_tool(tools, "npm");
+}
+
+fn push_tool(tools: &mut Vec<&'static str>, tool: &'static str) {
+    if !tools.contains(&tool) {
+        tools.push(tool);
+    }
+}
+
 fn step<const N: usize>(description: &str, command: [&str; N]) -> Step {
-    Step { description: description.to_string(), command: command.iter().map(|p| p.to_string()).collect() }
+    Step {
+        description: description.to_string(),
+        command: command.iter().map(|p| p.to_string()).collect(),
+    }
 }
 
 #[cfg(test)]
@@ -189,16 +532,31 @@ mod tests {
     use super::*;
 
     fn context(areas: &[Area]) -> ExecutionContext {
-        ExecutionContext { impacted_areas: areas.to_vec() }
+        ExecutionContext {
+            impacted_areas: areas.to_vec(),
+        }
     }
 
     #[test]
     fn verify_plan_contains_requested_component_checks() {
         let plan = verify_plan(&context(&[Area::NextWeb, Area::NodeLib]));
         assert_eq!(plan.name, "verify");
-        assert!(plan.steps.iter().any(|s| s.description.contains("next-web")));
-        assert!(plan.steps.iter().any(|s| s.description.contains("node-lib")));
-        assert!(!plan.steps.iter().any(|s| s.description.contains("java-lib")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|s| s.description.contains("next-web")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|s| s.description.contains("node-lib")));
+        assert!(!plan
+            .steps
+            .iter()
+            .any(|s| s.description.contains("java-lib")));
+        assert_eq!(
+            plan.required_tools,
+            vec!["node".to_string(), "npm".to_string()]
+        );
     }
 
     #[test]
@@ -206,11 +564,32 @@ mod tests {
         let plan = e2e_emulated_plan();
         assert_eq!(plan.steps.first().unwrap().description, "start nexus");
         assert_eq!(plan.steps.last().unwrap().description, "tear down nexus");
+        assert!(plan.required_tools.iter().any(|tool| tool == "mvn"));
+        assert!(plan.required_tools.iter().any(|tool| tool == "podman"));
     }
 
     #[test]
     fn build_plan_noops_when_nothing_is_impacted() {
-        let plan = build_plan(&ExecutionContext { impacted_areas: vec![Area::Docs] });
-        assert_eq!(plan.steps, vec![noop_step("no impacted component work detected")]);
+        let plan = build_plan(&ExecutionContext {
+            impacted_areas: vec![Area::Docs],
+        });
+        assert_eq!(
+            plan.steps,
+            vec![noop_step("no impacted component work detected")]
+        );
+        assert!(plan.required_tools.is_empty());
+    }
+
+    #[test]
+    fn publish_plan_requires_java_tools_for_java_lib() {
+        let plan = publish_plan(&context(&[Area::JavaLib]));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.description.contains("publish java-lib")));
+        assert_eq!(
+            plan.required_tools,
+            vec!["java".to_string(), "mvn".to_string()]
+        );
     }
 }

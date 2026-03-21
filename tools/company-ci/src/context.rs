@@ -52,7 +52,14 @@ mod tests {
     #[test]
     fn affects_everything_when_no_changed_files_are_supplied() {
         let context = ExecutionContext {
-            impacted_areas: vec![Area::NextWeb, Area::SpringApi, Area::NodeLib, Area::JavaLib, Area::Deploy, Area::Tooling],
+            impacted_areas: vec![
+                Area::NextWeb,
+                Area::SpringApi,
+                Area::NodeLib,
+                Area::JavaLib,
+                Area::Deploy,
+                Area::Tooling,
+            ],
         };
         assert!(context.affects(Area::NextWeb));
         assert!(context.affects(Area::JavaLib));

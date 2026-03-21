@@ -36,12 +36,16 @@ The always-on verification workflow builds the Rust CLI from source and delegate
 cargo run -p company-ci -- verify
 ```
 
+Each top-level `company-ci` command also performs a required-tools preflight before it executes real work. GitHub Actions is still responsible for installing language runtimes and platform CLIs, but the Rust CLI verifies that the expected tools are actually on `PATH`.
+
 See `docs/architecture.md`, `docs/workflows.md`, `docs/local-dev.md`, and `docs/test-strategy.md` for detailed guidance.
 
 ## Current reality
 
-The Node slice is the most concrete path in the scaffold today:
+The most concrete paths in the scaffold today are the Node and Java verification lanes:
 
 - `apps/next-web` lint/tests/build produce a static artifact in `dist/`.
 - `libs/node-lib` runs lint, contract type checks, build, tests against built output, and `npm pack --dry-run`.
-- `company-ci verify` exercises that Node path end-to-end.
+- `apps/spring-api` runs real Maven verify/package flows with Spring Boot tests.
+- `libs/java-lib` runs real Maven verify/package/publish flows against a Maven-style target.
+- `company-ci verify` exercises both the Node and Java lanes end-to-end.
