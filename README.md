@@ -40,6 +40,16 @@ Each top-level `company-ci` command also performs a required-tools preflight bef
 
 Containerized local workflows default to Docker and kind. Set `COMPANY_CI_CONTAINER_ENGINE=podman` if you want the same commands to target Podman instead.
 
+Container image flows now resolve from a generic env contract so the same CLI can target local Nexus or a future external Artifactory-backed workflow:
+
+- `COMPANY_CI_IMAGE_PUSH_REGISTRY`
+- `COMPANY_CI_IMAGE_PULL_REGISTRY`
+- `COMPANY_CI_IMAGE_NAMESPACE`
+- `COMPANY_CI_IMAGE_TAG`
+- `COMPANY_CI_IMAGE_REGISTRY_USERNAME`
+- `COMPANY_CI_IMAGE_REGISTRY_PASSWORD`
+- `COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE`
+
 ## Local setup
 
 Supported local hosts:
@@ -69,3 +79,4 @@ The most concrete paths in the scaffold today are the verification lanes and the
 - `company-ci publish npm-lib libs/node-lib --tag ci` and `company-ci publish maven-lib libs/java-lib` drive the local library publish paths through the Nexus helper flow.
 - `apps/spring-api` runs real Maven verify/package flows with Spring Boot tests.
 - `company-ci e2e emulated` now brings up Nexus and kind helpers, pushes app images to a local registry, deploys to kind, and verifies live service responses.
+- `company-ci deploy openshift` and `company-ci e2e openshift-local` now model the higher-fidelity local path of Nexus as the image repository plus OpenShift Local for deployment and route-based health checks.

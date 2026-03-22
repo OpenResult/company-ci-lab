@@ -100,3 +100,39 @@ fn publish_rejects_contract_and_path_mismatch() {
         project_dir.display()
     )));
 }
+
+#[test]
+fn deploy_openshift_dry_run_includes_pull_secret_and_route_checks() {
+    let output = Command::new(env!("CARGO_BIN_EXE_company-ci"))
+        .args(["deploy", "openshift", "--dry-run"])
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[dry-run] verify required tool: oc"));
+    assert!(stdout.contains("[dry-run] verify required tool: curl"));
+    assert!(stdout.contains("[dry-run] apply registry pull secret"));
+    assert!(stdout.contains("host.crc.testing:5002/company-ci/next-web:dev"));
+    assert!(
+        stdout.contains("testbeds/openshift-local/check-route.sh next-web / company-ci next-web")
+    );
+}
+
+#[test]
+fn e2e_openshift_local_dry_run_uses_resolved_registry_contract() {
+    let output = Command::new(env!("CARGO_BIN_EXE_company-ci"))
+        .env("COMPANY_CI_IMAGE_TAG", "qa")
+        .args(["e2e", "openshift-local", "--dry-run"])
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[dry-run] openshift-local image tag: qa"));
+    assert!(stdout.contains(
+        "COMPANY_CI_IMAGE_PUSH_REGISTRY=${COMPANY_CI_IMAGE_PUSH_REGISTRY:-'localhost:5002'}"
+    ));
+    assert!(stdout.contains("cargo run -p company-ci -- image publish"));
+    assert!(stdout.contains("cargo run -p company-ci -- deploy openshift"));
+}

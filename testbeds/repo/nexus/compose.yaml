@@ -3,3 +3,4 @@ services:
     image: sonatype/nexus3:3.70.1
     ports:
       - "8081:8081"
+      - "5002:5002"

@@ -1,0 +1,10 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: next-web
+spec:
+  to:
+    kind: Service
+    name: next-web
+  port:
+    targetPort: 80

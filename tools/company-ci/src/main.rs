@@ -3,6 +3,7 @@ mod commands;
 mod container_engine;
 mod context;
 mod error;
+mod image_config;
 mod impact;
 mod plan;
 mod runner;

@@ -1,9 +1,11 @@
 use crate::container_engine::ContainerEngine;
 use crate::context::ExecutionContext;
 use crate::error::CompanyCiError;
+use crate::image_config::{ApplicationImage, ImageProfile, ImageSettings};
 use crate::impact::Area;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
@@ -152,6 +154,7 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
     let mut steps = Vec::new();
     let mut required_tools = Vec::new();
     let engine = context.container_engine;
+    let image_settings = ImageSettings::from_env(ImageProfile::Local);
     if context.affects(Area::NextWeb) {
         steps.push(step(
             "build next-web image inputs",
@@ -159,9 +162,11 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
         ));
         steps.push(shell_step(
             "build next-web image",
-            &format!(
-                "image_ref=${{NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev}} && {} build -f apps/next-web/Containerfile -t ${{image_ref}} apps/next-web",
-                engine.binary()
+            &image_build_command(
+                engine,
+                "apps/next-web/Containerfile",
+                &image_settings.push_ref(ApplicationImage::NextWeb),
+                "apps/next-web",
             ),
         ));
         push_tool(&mut required_tools, "node");
@@ -183,9 +188,11 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
         ));
         steps.push(shell_step(
             "build spring-api image",
-            &format!(
-                "image_ref=${{SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev}} && {} build -f apps/spring-api/Containerfile -t ${{image_ref}} apps/spring-api",
-                engine.binary()
+            &image_build_command(
+                engine,
+                "apps/spring-api/Containerfile",
+                &image_settings.push_ref(ApplicationImage::SpringApi),
+                "apps/spring-api",
             ),
         ));
         push_tool(&mut required_tools, "java");
@@ -202,10 +209,20 @@ pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
     let mut steps = Vec::new();
     let mut required_tools = Vec::new();
     let engine = context.container_engine;
+    let image_settings = ImageSettings::from_env(ImageProfile::Local);
+    if (context.affects(Area::NextWeb) || context.affects(Area::SpringApi))
+        && image_settings.has_registry_auth()
+    {
+        steps.push(step(
+            "authenticate to image registry",
+            ["sh", "testbeds/lib/container-registry-login.sh"],
+        ));
+        push_tool(&mut required_tools, engine.binary());
+    }
     if context.affects(Area::NextWeb) {
         steps.push(shell_step(
             "push next-web image",
-            &image_push_command(engine, "NEXT_WEB_IMAGE_REF", "localhost:5001/next-web:dev"),
+            &image_push_command(engine, &image_settings.push_ref(ApplicationImage::NextWeb)),
         ));
         push_tool(&mut required_tools, engine.binary());
     }
@@ -214,8 +231,7 @@ pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
             "push spring-api image",
             &image_push_command(
                 engine,
-                "SPRING_API_IMAGE_REF",
-                "localhost:5001/spring-api:dev",
+                &image_settings.push_ref(ApplicationImage::SpringApi),
             ),
         ));
         push_tool(&mut required_tools, engine.binary());
@@ -227,6 +243,7 @@ pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
 }
 
 pub fn deploy_kubernetes_plan(_context: &ExecutionContext) -> Plan {
+    let image_settings = ImageSettings::from_env(ImageProfile::Local);
     Plan::new(
         "deploy-kubernetes",
         vec![
@@ -234,21 +251,19 @@ pub fn deploy_kubernetes_plan(_context: &ExecutionContext) -> Plan {
                 "apply kind overlay",
                 ["kubectl", "apply", "-k", "deploy/kind/overlays/ci"],
             ),
-            step(
+            shell_step(
                 "set next-web image",
-                [
-                    "sh",
-                    "-c",
-                    "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && kubectl set image deployment/next-web next-web=${image_ref}",
-                ],
+                &format!(
+                    "kubectl set image deployment/next-web next-web={}",
+                    sh_quote(&image_settings.pull_ref(ApplicationImage::NextWeb))
+                ),
             ),
-            step(
+            shell_step(
                 "set spring-api image",
-                [
-                    "sh",
-                    "-c",
-                    "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && kubectl set image deployment/spring-api spring-api=${image_ref}",
-                ],
+                &format!(
+                    "kubectl set image deployment/spring-api spring-api={}",
+                    sh_quote(&image_settings.pull_ref(ApplicationImage::SpringApi))
+                ),
             ),
             step(
                 "verify next-web rollout",
@@ -288,28 +303,39 @@ pub fn deploy_kubernetes_plan(_context: &ExecutionContext) -> Plan {
 }
 
 pub fn deploy_openshift_plan(_context: &ExecutionContext) -> Plan {
+    let image_settings = ImageSettings::from_env(ImageProfile::OpenshiftLocal);
+    let env_defaults = openshift_local_default_env(&image_settings);
     Plan::new(
         "deploy-openshift",
         vec![
             step(
+                "verify OpenShift login",
+                ["sh", "testbeds/openshift-local/scripts/login.sh"],
+            ),
+            shell_step(
+                "apply registry pull secret",
+                &command_with_default_env(
+                    &env_defaults,
+                    "sh testbeds/openshift-local/apply-registry-pull-secret.sh company-ci-registry",
+                ),
+            ),
+            step(
                 "apply openshift dev overlay",
                 ["oc", "apply", "-k", "deploy/openshift/overlays/dev"],
             ),
-            step(
+            shell_step(
                 "set next-web image",
-                [
-                    "sh",
-                    "-c",
-                    "image_ref=${NEXT_WEB_IMAGE_REF:-localhost:5001/next-web:dev} && oc set image deployment/next-web next-web=${image_ref}",
-                ],
+                &format!(
+                    "oc set image deployment/next-web next-web={}",
+                    sh_quote(&image_settings.pull_ref(ApplicationImage::NextWeb))
+                ),
             ),
-            step(
+            shell_step(
                 "set spring-api image",
-                [
-                    "sh",
-                    "-c",
-                    "image_ref=${SPRING_API_IMAGE_REF:-localhost:5001/spring-api:dev} && oc set image deployment/spring-api spring-api=${image_ref}",
-                ],
+                &format!(
+                    "oc set image deployment/spring-api spring-api={}",
+                    sh_quote(&image_settings.pull_ref(ApplicationImage::SpringApi))
+                ),
             ),
             step(
                 "verify next-web rollout",
@@ -319,9 +345,37 @@ pub fn deploy_openshift_plan(_context: &ExecutionContext) -> Plan {
                 "verify spring-api rollout",
                 ["oc", "rollout", "status", "deployment/spring-api"],
             ),
+            step(
+                "check next-web route",
+                [
+                    "sh",
+                    "testbeds/openshift-local/check-route.sh",
+                    "next-web",
+                    "/",
+                    "company-ci next-web",
+                ],
+            ),
+            step(
+                "check spring-api route",
+                [
+                    "sh",
+                    "testbeds/openshift-local/check-route.sh",
+                    "spring-api",
+                    "/api/health",
+                    "ok",
+                ],
+            ),
         ],
     )
-    .with_required_tools(["oc"])
+    .with_required_tools(["oc", "curl"])
+    .with_dry_run_notes([
+        format!(
+            "openshift image pull registry: {}",
+            image_settings.pull_registry()
+        ),
+        format!("openshift image namespace: {}", image_settings.namespace()),
+        format!("openshift image tag: {}", image_settings.tag()),
+    ])
 }
 
 pub fn env_up_kind_plan(context: &ExecutionContext) -> Plan {
@@ -526,37 +580,55 @@ pub fn e2e_emulated_plan(context: &ExecutionContext) -> Plan {
 }
 
 pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
+    let image_settings = openshift_local_e2e_settings();
+    let env_defaults = openshift_local_default_env(&image_settings);
     Plan::new(
         "e2e-openshift-local",
         vec![
             step(
-                "assume OpenShift Local login",
-                ["sh", "testbeds/openshift-local/scripts/login.sh"],
-            ),
-            step(
-                "verify all components",
-                ["cargo", "run", "-p", "company-ci", "--", "verify"],
-            ),
-            step(
-                "build images",
-                ["cargo", "run", "-p", "company-ci", "--", "image", "build"],
-            ),
-            step(
-                "deploy openshift overlays",
+                "start nexus",
                 [
                     "cargo",
                     "run",
                     "-p",
                     "company-ci",
                     "--",
-                    "deploy",
-                    "openshift",
+                    "env",
+                    "up",
+                    "nexus",
                 ],
+            ),
+            step(
+                "verify OpenShift Local login",
+                ["sh", "testbeds/openshift-local/scripts/login.sh"],
+            ),
+            step(
+                "verify all components",
+                ["cargo", "run", "-p", "company-ci", "--", "verify"],
+            ),
+            shell_step(
+                "build images",
+                &command_with_default_env(&env_defaults, "cargo run -p company-ci -- image build"),
+            ),
+            shell_step(
+                "publish images",
+                &command_with_default_env(
+                    &env_defaults,
+                    "cargo run -p company-ci -- image publish",
+                ),
+            ),
+            shell_step(
+                "deploy openshift overlays",
+                &command_with_default_env(
+                    &env_defaults,
+                    "cargo run -p company-ci -- deploy openshift",
+                ),
             ),
         ],
     )
     .with_required_tools([
         "cargo",
+        "curl",
         "oc",
         "java",
         "mvn",
@@ -564,6 +636,10 @@ pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
         "npm",
         context.container_engine.binary(),
     ])
+    .with_dry_run_notes([format!(
+        "openshift-local image tag: {}",
+        image_settings.tag()
+    )])
 }
 
 #[derive(Clone, Copy)]
@@ -821,14 +897,95 @@ fn compose_command(engine: ContainerEngine, compose_file: &str, operation: &str)
     )
 }
 
-fn image_push_command(engine: ContainerEngine, image_env: &str, default_image_ref: &str) -> String {
-    let prefix = format!("image_ref=${{{image_env}:-{default_image_ref}}} && ");
+fn image_build_command(
+    engine: ContainerEngine,
+    containerfile: &str,
+    image_ref: &str,
+    build_context: &str,
+) -> String {
+    format!(
+        "{} build -f {} -t {} {}",
+        engine.binary(),
+        sh_quote(containerfile),
+        sh_quote(image_ref),
+        sh_quote(build_context)
+    )
+}
+
+fn image_push_command(engine: ContainerEngine, image_ref: &str) -> String {
     match engine {
-        ContainerEngine::Docker => format!("{prefix}docker push ${{image_ref}}"),
+        ContainerEngine::Docker => format!("docker push {}", sh_quote(image_ref)),
         ContainerEngine::Podman => format!(
-            "{prefix}podman push --tls-verify=${{COMPANY_CI_IMAGE_TLS_VERIFY:-false}} ${{image_ref}}"
+            "podman push --tls-verify=${{COMPANY_CI_IMAGE_TLS_VERIFY:-false}} {}",
+            sh_quote(image_ref)
         ),
     }
+}
+
+fn openshift_local_e2e_settings() -> ImageSettings {
+    let settings = ImageSettings::from_env(ImageProfile::OpenshiftLocal);
+    if env_var_is_nonempty("COMPANY_CI_IMAGE_TAG") {
+        settings
+    } else {
+        settings.with_tag(generate_unique_local_tag())
+    }
+}
+
+fn openshift_local_default_env(settings: &ImageSettings) -> Vec<(&'static str, String)> {
+    let mut defaults = vec![
+        (
+            "COMPANY_CI_IMAGE_PUSH_REGISTRY",
+            settings.push_registry().to_string(),
+        ),
+        (
+            "COMPANY_CI_IMAGE_PULL_REGISTRY",
+            settings.pull_registry().to_string(),
+        ),
+        (
+            "COMPANY_CI_IMAGE_NAMESPACE",
+            settings.namespace().to_string(),
+        ),
+        ("COMPANY_CI_IMAGE_TAG", settings.tag().to_string()),
+    ];
+
+    if let Some(username) = settings.registry_username() {
+        defaults.push(("COMPANY_CI_IMAGE_REGISTRY_USERNAME", username.to_string()));
+    }
+    if let Some(password_file) = settings.registry_password_file() {
+        defaults.push((
+            "COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE",
+            password_file.to_string(),
+        ));
+    }
+
+    defaults
+}
+
+fn command_with_default_env(defaults: &[(&str, String)], command: &str) -> String {
+    let mut parts = defaults
+        .iter()
+        .map(|(name, value)| format!("{name}=${{{name}:-{}}}", sh_quote(value)))
+        .collect::<Vec<_>>();
+    parts.push(command.to_string());
+    parts.join(" ")
+}
+
+fn env_var_is_nonempty(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn generate_unique_local_tag() -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("companyci.{}.{}", elapsed.as_secs(), elapsed.subsec_nanos())
+}
+
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn add_java_tools(tools: &mut Vec<&'static str>) {
@@ -984,5 +1141,42 @@ mod tests {
             .iter()
             .any(|step| step.description.contains("check next-web homepage")));
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
+    }
+
+    #[test]
+    fn deploy_openshift_plan_creates_pull_secret_and_checks_routes() {
+        let plan = deploy_openshift_plan(&context(&[Area::Deploy]));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.description.contains("apply registry pull secret")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.command.join(" ").contains("check-route.sh next-web /")));
+        assert!(plan.steps.iter().any(|step| step
+            .command
+            .join(" ")
+            .contains("host.crc.testing:5002/company-ci/spring-api:dev")));
+        assert!(plan.required_tools.iter().any(|tool| tool == "oc"));
+        assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
+    }
+
+    #[test]
+    fn e2e_openshift_local_plan_uses_nexus_and_publishes_images() {
+        let plan = e2e_openshift_local_plan(&context(&[Area::Testbeds]));
+        assert_eq!(plan.steps.first().unwrap().description, "start nexus");
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.description.contains("publish images")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.command.join(" ").contains("deploy openshift")));
+        assert!(plan.required_tools.iter().any(|tool| tool == "oc"));
+        assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
+        assert!(!plan.required_tools.iter().any(|tool| tool == "kind"));
+        assert!(!plan.required_tools.iter().any(|tool| tool == "kubectl"));
     }
 }

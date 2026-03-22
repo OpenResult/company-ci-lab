@@ -48,6 +48,16 @@ create_maven_snapshots_repository() {
     >/dev/null
 }
 
+create_container_hosted_repository() {
+  curl --fail --silent --show-error \
+    -u "${username}:${password}" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    "${base_url}/service/rest/v1/repositories/docker/hosted" \
+    -d '{"name":"container-hosted","online":true,"storage":{"blobStoreName":"default","strictContentTypeValidation":true,"writePolicy":"allow"},"docker":{"v1Enabled":false,"forceBasicAuth":true,"httpPort":5002}}' \
+    >/dev/null
+}
+
 for _ in $(seq 1 120); do
   if company_ci_compose -f "${compose_file}" exec -T nexus test -f /nexus-data/admin.password >/dev/null 2>&1; then
     break
@@ -78,11 +88,11 @@ if ! repository_exists "npm-hosted"; then
   refresh_repositories
 fi
 
-for repository in maven-snapshots npm-hosted; do
-  if ! repository_exists "${repository}"; then
-    echo "required Nexus repository not found: ${repository}" >&2
-    exit 1
-  fi
-done
+if ! repository_exists "container-hosted"; then
+  create_container_hosted_repository
+  refresh_repositories
+fi
 
-echo "nexus ready at ${base_url}"
+sh "${script_dir}/verify-repositories.sh" "${repositories_file}" container-hosted maven-snapshots npm-hosted
+
+echo "nexus ready at ${base_url} with Docker registry on localhost:5002"

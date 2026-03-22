@@ -16,13 +16,13 @@
 ## Layer C: emulated platform
 
 - kind plus a local registry, using Docker by default and Podman when `COMPANY_CI_CONTAINER_ENGINE=podman`.
-- Nexus via Docker Compose, with readiness checks and repo validation for the npm and Maven repositories the CLI expects.
+- Nexus via Docker Compose, with readiness checks and repo validation for the npm, Maven, and Docker hosted repositories the CLI expects.
 - `company-ci e2e emulated` owns startup, orchestration, explicit local package publication, image push, deploy, live service checks, and teardown sequencing.
 
 ## Layer D: higher-fidelity OpenShift local
 
 - Assumes an existing OpenShift Local environment.
-- Uses OpenShift overlays and `oc` to verify rollout.
+- Uses the same CLI registry contract with a local Nexus-backed image repo, applies OpenShift overlays with Routes and pull-secret wiring, and verifies live HTTP responses through `oc` plus route checks.
 
 ## Layer E: GitHub.com integration
 

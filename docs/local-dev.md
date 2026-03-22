@@ -16,8 +16,8 @@ Run the repo from the macOS terminal or from the Linux shell inside WSL. Do not 
 - Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 21 with Maven.
 - `company-ci env up nexus` requires `docker` by default or `podman` when `COMPANY_CI_CONTAINER_ENGINE=podman`, plus `curl`.
 - `company-ci env up kind`, `company-ci deploy kubernetes`, and `company-ci e2e emulated` require the selected container engine, `kind`, and `kubectl`.
+- `company-ci deploy openshift` and `company-ci e2e openshift-local` require `oc` plus an existing OpenShift Local login.
 - `act` is only needed for local workflow smoke tests.
-- `oc` is only needed for `company-ci e2e openshift-local`.
 
 ## Install required tools on macOS
 
@@ -117,7 +117,7 @@ Install `act` and `oc` only if you need the optional workflow-smoke or OpenShift
 ./scripts/dev-verify.sh
 ```
 
-The default local model is Docker Desktop plus kind. `company-ci` assumes `docker` unless `COMPANY_CI_CONTAINER_ENGINE=podman` is set.
+The default local model is Docker Desktop plus kind. `company-ci` assumes `docker` unless `COMPANY_CI_CONTAINER_ENGINE=podman` is set. The higher-fidelity local OpenShift profile uses the same CLI but resolves images through a Nexus Docker hosted repository on `localhost:5002`, with OpenShift Local pulling those images through `host.crc.testing:5002`.
 
 ## Run the Rust CLI directly
 
@@ -128,6 +128,8 @@ cargo run -p company-ci -- env up nexus
 cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci --dry-run
 cargo run -p company-ci -- publish maven-lib libs/java-lib --dry-run
 cargo run -p company-ci -- env up kind
+cargo run -p company-ci -- deploy openshift --dry-run
+cargo run -p company-ci -- e2e openshift-local --dry-run
 ```
 
 Dry-run output includes the required tool preflight for the selected command. Real runs verify those tools on `PATH` before starting work.
@@ -152,7 +154,38 @@ act workflow_dispatch -W .github/workflows/emulated-e2e.yml
 
 ## OpenShift Local profile
 
-`company-ci e2e openshift-local` assumes OpenShift Local and `oc` are already installed. See `testbeds/openshift-local/README.md`.
+`company-ci e2e openshift-local` assumes OpenShift Local and `oc` are already installed and logged in. The command starts Nexus locally, builds and publishes app images into the Nexus Docker hosted repo, deploys the OpenShift overlay, and verifies the exposed Routes.
+
+The reusable image contract for OpenShift-based deploys is:
+
+```bash
+COMPANY_CI_IMAGE_PUSH_REGISTRY
+COMPANY_CI_IMAGE_PULL_REGISTRY
+COMPANY_CI_IMAGE_NAMESPACE
+COMPANY_CI_IMAGE_TAG
+COMPANY_CI_IMAGE_REGISTRY_USERNAME
+COMPANY_CI_IMAGE_REGISTRY_PASSWORD
+COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE
+```
+
+For the local OpenShift profile, `company-ci` defaults these values to:
+
+```bash
+COMPANY_CI_IMAGE_PUSH_REGISTRY=localhost:5002
+COMPANY_CI_IMAGE_PULL_REGISTRY=host.crc.testing:5002
+COMPANY_CI_IMAGE_NAMESPACE=company-ci
+COMPANY_CI_IMAGE_TAG=dev
+COMPANY_CI_IMAGE_REGISTRY_USERNAME=admin
+COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE=testbeds/repo/nexus/.runtime/admin.password
+```
+
+The direct local happy path is:
+
+```bash
+cargo run -p company-ci -- env up nexus
+oc login ...
+cargo run -p company-ci -- e2e openshift-local
+```
 
 
 ## Scoping work to changed files
@@ -178,4 +211,4 @@ cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci
 cargo run -p company-ci -- publish maven-lib libs/java-lib
 ```
 
-`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses direct Maven goals through `company-ci`, and the emulated path now captures Nexus runtime credentials in `testbeds/repo/nexus/.runtime/` so later publish steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.
+`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses direct Maven goals through `company-ci`, and the local Nexus path now captures runtime credentials in `testbeds/repo/nexus/.runtime/` so later package, image-publish, and OpenShift deploy steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.

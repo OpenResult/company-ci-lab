@@ -1,3 +1,14 @@
 resources:
   - ../../../base/next-web
   - ../../../base/spring-api
+  - next-web-route.yaml
+  - spring-api-route.yaml
+patches:
+  - path: next-web-deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: next-web
+  - path: spring-api-deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: spring-api

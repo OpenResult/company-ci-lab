@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: next-web
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+        - name: company-ci-registry
+      containers:
+        - name: next-web
+          imagePullPolicy: Always
