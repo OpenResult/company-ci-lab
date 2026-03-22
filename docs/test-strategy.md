@@ -11,7 +11,7 @@
 ## Layer B: local workflow smoke
 
 - `act` against `verify.yml` and `emulated-e2e.yml`.
-- Thin workflows mean the local and hosted paths exercise the same Rust entry points.
+- Thin workflows mean the local and hosted paths exercise the same Rust entry points and the same `company-ci` command palette.
 
 ## Layer C: emulated platform
 

@@ -1,0 +1,38 @@
+name: setup-company-ci
+description: Build company-ci from the checked-out repository and add it to PATH
+
+inputs:
+  profile:
+    description: Cargo build profile
+    default: debug
+
+runs:
+  using: composite
+  steps:
+    - name: Build and install company-ci
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        profile="${{ inputs.profile }}"
+        case "$profile" in
+          debug)
+            cargo build -p company-ci --locked
+            binary="target/debug/company-ci"
+            ;;
+          release)
+            cargo build -p company-ci --release --locked
+            binary="target/release/company-ci"
+            ;;
+          *)
+            echo "unsupported company-ci profile: $profile" >&2
+            exit 1
+            ;;
+        esac
+
+        install_root="${RUNNER_TEMP}/company-ci/${profile}"
+        install_bin="${install_root}/bin"
+        mkdir -p "$install_bin"
+        cp "$binary" "${install_bin}/company-ci"
+        chmod +x "${install_bin}/company-ci"
+        echo "$install_bin" >> "$GITHUB_PATH"

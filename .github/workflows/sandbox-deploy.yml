@@ -25,5 +25,19 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-company-ci
+      - name: Install kubectl
+        if: inputs.platform == 'kubernetes'
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+      - name: Install oc
+        if: inputs.platform == 'openshift'
+        run: |
+          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz -o openshift-client-linux.tar.gz
+          tar -xzf openshift-client-linux.tar.gz oc
+          chmod +x oc
+          sudo mv oc /usr/local/bin/oc
       - name: Run sandbox deployment
-        run: cargo run -p company-ci -- deploy ${{ inputs.platform }}
+        run: company-ci deploy ${{ inputs.platform }}

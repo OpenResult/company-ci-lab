@@ -134,6 +134,8 @@ cargo run -p company-ci -- e2e openshift-local --dry-run
 
 Dry-run output includes the required tool preflight for the selected command. Real runs verify those tools on `PATH` before starting work.
 
+The workflows install the same CLI onto `PATH` and then invoke `company-ci ...` directly. Locally, `cargo run -p company-ci -- ...` is just the bootstrap path before you package or install the binary yourself.
+
 For hosted Maven publication, materialize a `settings.xml` file in the workflow and pass it to `company-ci` with `MAVEN_SETTINGS_PATH`, plus `MAVEN_DEPLOY_URL` and `MAVEN_SERVER_ID`. Example:
 
 ```bash

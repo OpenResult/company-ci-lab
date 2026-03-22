@@ -2,10 +2,14 @@
 
 `company-ci-lab` demonstrates a thin GitHub Actions architecture backed by a repo-local Rust CLI named `company-ci`.
 
+The point of the repo is not "how to write more YAML". It is the opposite: GitHub Actions workflow YAML is a poor DSL for maintainable CI logic once the behavior becomes non-trivial. This repo keeps workflows thin and moves the real CI API into typed, testable Rust code that can run locally, under `act`, and on GitHub-hosted runners.
+
 ## Architectural intent
 
 - Keep GitHub Actions thin and boring.
 - Put reusable decision logic and side effects in `tools/company-ci`.
+- Treat `company-ci` as the CI command palette and workflow-facing API.
+- Keep orchestration in Rust where it is type-safe, testable, and refactorable.
 - Provide sample applications and libraries that exercise build, test, package, publish, image, and deploy flows.
 - Make local emulation the default path for end-to-end experimentation.
 
@@ -18,7 +22,8 @@
 - `libs/java-lib`: minimal Java library.
 - `deploy/`: Kustomize-style deployment manifests.
 - `testbeds/`: local and emulated environment assets.
-- `.github/workflows/`: thin workflows that call `company-ci`.
+- `.github/actions/setup-company-ci`: local action that installs the `company-ci` binary onto `PATH`.
+- `.github/workflows/`: thin workflows that install and call `company-ci`.
 
 ## Quick start
 
@@ -30,13 +35,40 @@ cargo run -p company-ci -- verify --dry-run
 
 ## CI contract
 
-The always-on verification workflow builds the Rust CLI from source and delegates verification to `company-ci`. When `COMPANY_CI_CHANGED_FILES` is provided, `company-ci` can internally narrow work to impacted areas and no-op unrelated component stages:
+The always-on verification workflow installs `company-ci` onto `PATH` and delegates verification to that binary. When `COMPANY_CI_CHANGED_FILES` is provided, `company-ci` can internally narrow work to impacted areas and no-op unrelated component stages:
 
 ```bash
-cargo run -p company-ci -- verify
+company-ci verify
 ```
 
 Each top-level `company-ci` command also performs a required-tools preflight before it executes real work. GitHub Actions is still responsible for installing language runtimes and platform CLIs, but the Rust CLI verifies that the expected tools are actually on `PATH`.
+
+That split is deliberate:
+
+- Workflows only describe triggers, runners, tool installation, and one top-level command.
+- `company-ci` owns the maintainable logic: impact detection, sequencing, environment contracts, and platform-specific orchestration.
+- The same command surface stays usable locally, in workflow runners, and in future installer-based entry points.
+
+In other words, the maintainability story lives in Rust code, not in YAML conditionals.
+
+## Command palette
+
+The reusable CI API is the `company-ci` command palette:
+
+```text
+company-ci verify [--dry-run]
+company-ci build [--dry-run]
+company-ci test [--dry-run]
+company-ci package [--dry-run]
+company-ci publish maven-lib <path> [--dry-run]
+company-ci publish npm-lib <path> [--dry-run] [--tag <dist-tag>]
+company-ci image build [--dry-run]
+company-ci image publish [--dry-run]
+company-ci deploy kubernetes [--dry-run]
+company-ci deploy openshift [--dry-run]
+company-ci env up|down kind|nexus [--dry-run]
+company-ci e2e emulated|openshift-local [--dry-run]
+```
 
 Containerized local workflows default to Docker and kind. Set `COMPANY_CI_CONTAINER_ENGINE=podman` if you want the same commands to target Podman instead.
 
@@ -80,3 +112,5 @@ The most concrete paths in the scaffold today are the verification lanes and the
 - `apps/spring-api` runs real Maven verify/package flows with Spring Boot tests.
 - `company-ci e2e emulated` now brings up Nexus and kind helpers, pushes app images to a local registry, deploys to kind, and verifies live service responses.
 - `company-ci deploy openshift` and `company-ci e2e openshift-local` now model the higher-fidelity local path of Nexus as the image repository plus OpenShift Local for deployment and route-based health checks.
+
+That is the core claim of the repo: maintainable CI should be real code with types, tests, and local execution, while GitHub Actions stays a thin transport for invoking that code.

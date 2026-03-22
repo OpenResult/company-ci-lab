@@ -133,6 +133,23 @@ fn e2e_openshift_local_dry_run_uses_resolved_registry_contract() {
     assert!(stdout.contains(
         "COMPANY_CI_IMAGE_PUSH_REGISTRY=${COMPANY_CI_IMAGE_PUSH_REGISTRY:-'localhost:5002'}"
     ));
-    assert!(stdout.contains("cargo run -p company-ci -- image publish"));
-    assert!(stdout.contains("cargo run -p company-ci -- deploy openshift"));
+    assert!(stdout.contains(" image publish"));
+    assert!(stdout.contains(" deploy openshift"));
+    assert!(!stdout.contains("cargo run -p company-ci"));
+    assert!(!stdout.contains("[dry-run] verify required tool: cargo"));
+}
+
+#[test]
+fn e2e_emulated_dry_run_invokes_company_ci_without_cargo() {
+    let output = Command::new(env!("CARGO_BIN_EXE_company-ci"))
+        .args(["e2e", "emulated", "--dry-run"])
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(" publish npm-lib libs/node-lib --tag ci"));
+    assert!(stdout.contains(" deploy kubernetes"));
+    assert!(!stdout.contains("cargo run -p company-ci"));
+    assert!(!stdout.contains("[dry-run] verify required tool: cargo"));
 }

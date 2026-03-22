@@ -5,6 +5,7 @@ use std::env;
 
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
+    pub company_ci_binary: String,
     pub container_engine: ContainerEngine,
     pub impacted_areas: Vec<Area>,
 }
@@ -39,8 +40,15 @@ impl ExecutionContext {
             infer_areas(changed_files.iter().map(String::as_str))
         };
 
-        let _ = changed_files;
+        let company_ci_binary = env::current_exe()
+            .map_err(|error| {
+                CompanyCiError::Runtime(format!("failed to resolve company-ci executable: {error}"))
+            })?
+            .to_string_lossy()
+            .into_owned();
+
         Ok(Self {
+            company_ci_binary,
             container_engine: ContainerEngine::detect()?,
             impacted_areas,
         })
@@ -58,6 +66,7 @@ mod tests {
     #[test]
     fn affects_everything_when_no_changed_files_are_supplied() {
         let context = ExecutionContext {
+            company_ci_binary: "company-ci".to_string(),
             container_engine: ContainerEngine::Docker,
             impacted_areas: vec![
                 Area::NextWeb,

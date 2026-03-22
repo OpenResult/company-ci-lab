@@ -456,118 +456,28 @@ pub fn e2e_emulated_plan(context: &ExecutionContext) -> Plan {
     Plan::new(
         "e2e-emulated",
         vec![
-            step(
-                "start nexus",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "env",
-                    "up",
-                    "nexus",
-                ],
-            ),
-            step(
-                "create kind cluster",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "env",
-                    "up",
-                    "kind",
-                ],
-            ),
-            step(
-                "verify all components",
-                ["cargo", "run", "-p", "company-ci", "--", "verify"],
-            ),
-            step(
-                "package artifacts",
-                ["cargo", "run", "-p", "company-ci", "--", "package"],
-            ),
-            step(
+            company_ci_step(context, "start nexus", &["env", "up", "nexus"]),
+            company_ci_step(context, "create kind cluster", &["env", "up", "kind"]),
+            company_ci_step(context, "verify all components", &["verify"]),
+            company_ci_step(context, "package artifacts", &["package"]),
+            company_ci_step(
+                context,
                 "publish node-lib",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "publish",
-                    "npm-lib",
-                    "libs/node-lib",
-                    "--tag",
-                    "ci",
-                ],
+                &["publish", "npm-lib", "libs/node-lib", "--tag", "ci"],
             ),
-            step(
+            company_ci_step(
+                context,
                 "publish java-lib",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "publish",
-                    "maven-lib",
-                    "libs/java-lib",
-                ],
+                &["publish", "maven-lib", "libs/java-lib"],
             ),
-            step(
-                "build images",
-                ["cargo", "run", "-p", "company-ci", "--", "image", "build"],
-            ),
-            step(
-                "publish images",
-                ["cargo", "run", "-p", "company-ci", "--", "image", "publish"],
-            ),
-            step(
-                "deploy to kind",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "deploy",
-                    "kubernetes",
-                ],
-            ),
-            step(
-                "tear down kind",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "env",
-                    "down",
-                    "kind",
-                ],
-            ),
-            step(
-                "tear down nexus",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "env",
-                    "down",
-                    "nexus",
-                ],
-            ),
+            company_ci_step(context, "build images", &["image", "build"]),
+            company_ci_step(context, "publish images", &["image", "publish"]),
+            company_ci_step(context, "deploy to kind", &["deploy", "kubernetes"]),
+            company_ci_step(context, "tear down kind", &["env", "down", "kind"]),
+            company_ci_step(context, "tear down nexus", &["env", "down", "nexus"]),
         ],
     )
     .with_required_tools([
-        "cargo",
         "curl",
         context.container_engine.binary(),
         "kind",
@@ -585,49 +495,36 @@ pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
     Plan::new(
         "e2e-openshift-local",
         vec![
-            step(
-                "start nexus",
-                [
-                    "cargo",
-                    "run",
-                    "-p",
-                    "company-ci",
-                    "--",
-                    "env",
-                    "up",
-                    "nexus",
-                ],
-            ),
+            company_ci_step(context, "start nexus", &["env", "up", "nexus"]),
             step(
                 "verify OpenShift Local login",
                 ["sh", "testbeds/openshift-local/scripts/login.sh"],
             ),
-            step(
-                "verify all components",
-                ["cargo", "run", "-p", "company-ci", "--", "verify"],
-            ),
+            company_ci_step(context, "verify all components", &["verify"]),
             shell_step(
                 "build images",
-                &command_with_default_env(&env_defaults, "cargo run -p company-ci -- image build"),
+                &command_with_default_env(
+                    &env_defaults,
+                    &company_ci_shell_command(context, &["image", "build"]),
+                ),
             ),
             shell_step(
                 "publish images",
                 &command_with_default_env(
                     &env_defaults,
-                    "cargo run -p company-ci -- image publish",
+                    &company_ci_shell_command(context, &["image", "publish"]),
                 ),
             ),
             shell_step(
                 "deploy openshift overlays",
                 &command_with_default_env(
                     &env_defaults,
-                    "cargo run -p company-ci -- deploy openshift",
+                    &company_ci_shell_command(context, &["deploy", "openshift"]),
                 ),
             ),
         ],
     )
     .with_required_tools([
-        "cargo",
         "curl",
         "oc",
         "java",
@@ -873,12 +770,26 @@ fn owned_step(description: impl Into<String>, command: Vec<String>) -> Step {
     }
 }
 
+fn company_ci_step(context: &ExecutionContext, description: &str, args: &[&str]) -> Step {
+    let mut command = vec![context.company_ci_binary.clone()];
+    command.extend(args.iter().map(|arg| (*arg).to_string()));
+    owned_step(description, command)
+}
+
 fn noop_step(description: &str) -> Step {
     step(description, ["true"])
 }
 
 fn shell_step(description: &str, command: &str) -> Step {
     step(description, ["sh", "-c", command])
+}
+
+fn company_ci_shell_command(context: &ExecutionContext, args: &[&str]) -> String {
+    let mut command = vec![sh_quote(&context.company_ci_binary)];
+    if !args.is_empty() {
+        command.push(args.join(" "));
+    }
+    command.join(" ")
 }
 
 fn kind_command(engine: ContainerEngine, operation: &str) -> String {
@@ -1018,6 +929,7 @@ mod tests {
 
     fn context(areas: &[Area]) -> ExecutionContext {
         ExecutionContext {
+            company_ci_binary: "company-ci".to_string(),
             container_engine: ContainerEngine::Docker,
             impacted_areas: areas.to_vec(),
         }
@@ -1069,11 +981,13 @@ mod tests {
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
         assert!(plan.required_tools.iter().any(|tool| tool == "mvn"));
         assert!(plan.required_tools.iter().any(|tool| tool == "docker"));
+        assert!(!plan.required_tools.iter().any(|tool| tool == "cargo"));
     }
 
     #[test]
     fn build_plan_noops_when_nothing_is_impacted() {
         let plan = build_plan(&ExecutionContext {
+            company_ci_binary: "company-ci".to_string(),
             container_engine: ContainerEngine::Docker,
             impacted_areas: vec![Area::Docs],
         });
@@ -1178,5 +1092,6 @@ mod tests {
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
         assert!(!plan.required_tools.iter().any(|tool| tool == "kind"));
         assert!(!plan.required_tools.iter().any(|tool| tool == "kubectl"));
+        assert!(!plan.required_tools.iter().any(|tool| tool == "cargo"));
     }
 }
