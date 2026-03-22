@@ -52,7 +52,7 @@ Install the required toolchain on the host before running non-dry-run `company-c
 
 - Rust toolchain with `cargo`
 - Node.js 24 with `npm`
-- Java 17 with `mvn`
+- Java 21 with `mvn`
 - Docker plus `kind` and `kubectl` for the default emulated path
 - `act` only for local workflow smoke tests
 - `oc` only for the OpenShift Local path
@@ -66,6 +66,6 @@ See `docs/architecture.md`, `docs/workflows.md`, `docs/local-dev.md`, and `docs/
 The most concrete paths in the scaffold today are the verification lanes and the local emulated path:
 
 - `apps/next-web` lint/tests/build produce a static artifact in `dist/`.
-- `company-ci publish` now drives both `libs/node-lib` and `libs/java-lib` through the local Nexus helper path.
+- `company-ci publish npm-lib libs/node-lib --tag ci` and `company-ci publish maven-lib libs/java-lib` drive the local library publish paths through the Nexus helper flow.
 - `apps/spring-api` runs real Maven verify/package flows with Spring Boot tests.
 - `company-ci e2e emulated` now brings up Nexus and kind helpers, pushes app images to a local registry, deploys to kind, and verifies live service responses.

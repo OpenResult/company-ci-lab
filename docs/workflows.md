@@ -17,3 +17,5 @@ Manual deployment entry point for an external sandbox. The workflow remains thin
 ## release-company-ci.yml
 
 Builds release artifacts for the CLI on tags or manual invocation. This prepares the repo for a future installer story without introducing reusable-workflow complexity now.
+
+Future hosted publish workflows should stay thin as well: materialize tool-native auth files such as Maven `settings.xml`, export `MAVEN_SETTINGS_PATH`/`MAVEN_DEPLOY_URL`/`MAVEN_SERVER_ID`, and call an explicit contract-based command such as `company-ci publish maven-lib libs/java-lib`.

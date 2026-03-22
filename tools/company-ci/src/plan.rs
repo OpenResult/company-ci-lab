@@ -1,6 +1,9 @@
 use crate::container_engine::ContainerEngine;
 use crate::context::ExecutionContext;
+use crate::error::CompanyCiError;
 use crate::impact::Area;
+use std::env;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
@@ -12,6 +15,7 @@ pub struct Step {
 pub struct Plan {
     pub name: String,
     pub required_tools: Vec<String>,
+    pub dry_run_notes: Vec<String>,
     pub steps: Vec<Step>,
 }
 
@@ -20,6 +24,7 @@ impl Plan {
         Self {
             name: name.into(),
             required_tools: Vec::new(),
+            dry_run_notes: Vec::new(),
             steps,
         }
     }
@@ -35,6 +40,15 @@ impl Plan {
                 self.required_tools.push(tool);
             }
         }
+        self
+    }
+
+    pub fn with_dry_run_notes<I, S>(mut self, notes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.dry_run_notes.extend(notes.into_iter().map(Into::into));
         self
     }
 }
@@ -69,9 +83,69 @@ pub fn package_plan(context: &ExecutionContext) -> Plan {
         .with_required_tools(component_required_tools(context, Mode::Package))
 }
 
-pub fn publish_plan(context: &ExecutionContext) -> Plan {
-    Plan::new("publish", component_steps(context, Mode::Publish))
-        .with_required_tools(component_required_tools(context, Mode::Publish))
+pub fn publish_maven_lib_plan(project_dir: &str) -> Result<Plan, CompanyCiError> {
+    let resolved = resolve_publish_project(project_dir, "pom.xml", "maven-lib")?;
+    let deploy_url = env::var("MAVEN_DEPLOY_URL")
+        .unwrap_or_else(|_| "http://localhost:8081/repository/maven-snapshots/".to_string());
+    let server_id = env::var("MAVEN_SERVER_ID").unwrap_or_else(|_| "local".to_string());
+
+    Ok(Plan::new(
+        "publish-maven-lib",
+        vec![owned_step(
+            format!("publish maven-lib from {}", resolved.project_dir_display),
+            vec![
+                "sh".to_string(),
+                "testbeds/repo/nexus/maven-deploy.sh".to_string(),
+                resolved.manifest_path_display.clone(),
+            ],
+        )],
+    )
+    .with_required_tools(["java", "mvn"])
+    .with_dry_run_notes([
+        "publish contract: maven-lib".to_string(),
+        format!("publish path: {}", resolved.project_dir_display),
+        format!("maven deploy url: {deploy_url}"),
+        format!("maven server id: {server_id}"),
+    ]))
+}
+
+pub fn publish_npm_lib_plan(project_dir: &str, tag: &str) -> Result<Plan, CompanyCiError> {
+    validate_npm_tag(tag)?;
+    let resolved = resolve_publish_project(project_dir, "package.json", "npm-lib")?;
+    let registry_url = env::var("NPM_REGISTRY_URL")
+        .unwrap_or_else(|_| "http://localhost:8081/repository/npm-hosted/".to_string());
+
+    Ok(Plan::new(
+        "publish-npm-lib",
+        vec![
+            owned_step(
+                format!("build npm-lib at {}", resolved.project_dir_display),
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    "cd \"$1\" && npm run build".to_string(),
+                    "sh".to_string(),
+                    resolved.project_dir_display.clone(),
+                ],
+            ),
+            owned_step(
+                format!("publish npm-lib from {}", resolved.project_dir_display),
+                vec![
+                    "sh".to_string(),
+                    "testbeds/repo/nexus/npm-publish.sh".to_string(),
+                    resolved.project_dir_display.clone(),
+                    tag.to_string(),
+                ],
+            ),
+        ],
+    )
+    .with_required_tools(["node", "npm"])
+    .with_dry_run_notes([
+        "publish contract: npm-lib".to_string(),
+        format!("publish path: {}", resolved.project_dir_display),
+        format!("npm registry url: {registry_url}"),
+        format!("npm dist-tag: {tag}"),
+    ]))
 }
 
 pub fn image_build_plan(context: &ExecutionContext) -> Plan {
@@ -363,8 +437,32 @@ pub fn e2e_emulated_plan(context: &ExecutionContext) -> Plan {
                 ["cargo", "run", "-p", "company-ci", "--", "package"],
             ),
             step(
-                "publish libraries",
-                ["cargo", "run", "-p", "company-ci", "--", "publish"],
+                "publish node-lib",
+                [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "publish",
+                    "npm-lib",
+                    "libs/node-lib",
+                    "--tag",
+                    "ci",
+                ],
+            ),
+            step(
+                "publish java-lib",
+                [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "company-ci",
+                    "--",
+                    "publish",
+                    "maven-lib",
+                    "libs/java-lib",
+                ],
             ),
             step(
                 "build images",
@@ -474,7 +572,6 @@ enum Mode {
     Build,
     Test,
     Package,
-    Publish,
 }
 
 fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
@@ -498,8 +595,8 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
                 "test next-web",
                 ["sh", "-c", "cd apps/next-web && npm test"],
             )],
-            Mode::Package | Mode::Publish => vec![noop_step(
-                "next-web packaging/publishing is handled through image commands",
+            Mode::Package => vec![noop_step(
+                "next-web packaging is handled through image commands",
             )],
         });
     }
@@ -545,9 +642,6 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
                     "package",
                 ],
             )],
-            Mode::Publish => vec![noop_step(
-                "spring-api publishing is handled through image commands",
-            )],
         });
     }
 
@@ -557,7 +651,6 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
             Mode::Build => vec![step("build node-lib", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build"])],
             Mode::Test => vec![step("test node-lib", ["sh", "-c", "cd libs/node-lib && npm run build && npm test"])],
             Mode::Package => vec![step("package node-lib", ["sh", "-c", "mkdir -p target/node-packages && cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm pack --pack-destination ../../target/node-packages"])],
-            Mode::Publish => vec![step("publish node-lib to npm-style repo", ["sh", "testbeds/repo/nexus/npm-publish.sh", "libs/node-lib"])],
         });
     }
 
@@ -595,14 +688,6 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
                     "package",
                 ],
             )],
-            Mode::Publish => vec![step(
-                "publish java-lib to maven-style repo",
-                [
-                    "sh",
-                    "testbeds/repo/nexus/maven-deploy.sh",
-                    "libs/java-lib/pom.xml",
-                ],
-            )],
         });
     }
 
@@ -632,7 +717,7 @@ fn component_required_tools(context: &ExecutionContext, mode: Mode) -> Vec<&'sta
     if context.affects(Area::NodeLib)
         && matches!(
             mode,
-            Mode::Verify | Mode::Build | Mode::Test | Mode::Package | Mode::Publish
+            Mode::Verify | Mode::Build | Mode::Test | Mode::Package
         )
     {
         add_node_tools(&mut tools);
@@ -641,13 +726,75 @@ fn component_required_tools(context: &ExecutionContext, mode: Mode) -> Vec<&'sta
     if context.affects(Area::JavaLib)
         && matches!(
             mode,
-            Mode::Verify | Mode::Build | Mode::Test | Mode::Package | Mode::Publish
+            Mode::Verify | Mode::Build | Mode::Test | Mode::Package
         )
     {
         add_java_tools(&mut tools);
     }
 
     tools
+}
+
+struct ResolvedPublishProject {
+    project_dir_display: String,
+    manifest_path_display: String,
+}
+
+fn resolve_publish_project(
+    project_dir: &str,
+    manifest_name: &str,
+    contract: &str,
+) -> Result<ResolvedPublishProject, CompanyCiError> {
+    let project_path = PathBuf::from(project_dir);
+    if !project_path.exists() {
+        return Err(CompanyCiError::InvalidArgument(format!(
+            "publish project path does not exist: {project_dir}"
+        )));
+    }
+    if !project_path.is_dir() {
+        return Err(CompanyCiError::InvalidArgument(format!(
+            "publish project path is not a directory: {project_dir}"
+        )));
+    }
+
+    let manifest_path = project_path.join(manifest_name);
+    if !manifest_path.is_file() {
+        return Err(CompanyCiError::InvalidArgument(format!(
+            "invalid publish target: {contract} requires {}/{}",
+            project_path.display(),
+            manifest_name
+        )));
+    }
+
+    Ok(ResolvedPublishProject {
+        project_dir_display: display_path(&project_path),
+        manifest_path_display: display_path(&manifest_path),
+    })
+}
+
+fn validate_npm_tag(tag: &str) -> Result<(), CompanyCiError> {
+    if tag.trim().is_empty() {
+        return Err(CompanyCiError::InvalidArgument(
+            "npm publish tag must not be empty".to_string(),
+        ));
+    }
+    if tag.chars().any(char::is_whitespace) {
+        return Err(CompanyCiError::InvalidArgument(
+            "npm publish tag must not contain whitespace".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn owned_step(description: impl Into<String>, command: Vec<String>) -> Step {
+    Step {
+        description: description.into(),
+        command,
+    }
 }
 
 fn noop_step(description: &str) -> Step {
@@ -710,12 +857,21 @@ fn step<const N: usize>(description: &str, command: [&str; N]) -> Step {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn context(areas: &[Area]) -> ExecutionContext {
         ExecutionContext {
             container_engine: ContainerEngine::Docker,
             impacted_areas: areas.to_vec(),
         }
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .to_path_buf()
     }
 
     #[test]
@@ -745,6 +901,14 @@ mod tests {
         let plan = e2e_emulated_plan(&context(&[Area::Testbeds]));
         assert_eq!(plan.steps.first().unwrap().description, "start nexus");
         assert_eq!(plan.steps.last().unwrap().description, "tear down nexus");
+        assert!(plan.steps.iter().any(|step| step
+            .command
+            .join(" ")
+            .contains("publish npm-lib libs/node-lib --tag ci")));
+        assert!(plan.steps.iter().any(|step| step
+            .command
+            .join(" ")
+            .contains("publish maven-lib libs/java-lib")));
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
         assert!(plan.required_tools.iter().any(|tool| tool == "mvn"));
         assert!(plan.required_tools.iter().any(|tool| tool == "docker"));
@@ -764,15 +928,51 @@ mod tests {
     }
 
     #[test]
-    fn publish_plan_requires_java_tools_for_java_lib() {
-        let plan = publish_plan(&context(&[Area::JavaLib]));
+    fn publish_maven_lib_plan_requires_java_tools_for_java_lib() {
+        let project_dir = repo_root().join("libs/java-lib");
+        let plan = publish_maven_lib_plan(project_dir.to_str().unwrap()).unwrap();
         assert!(plan
             .steps
             .iter()
-            .any(|step| step.description.contains("publish java-lib")));
+            .any(|step| step.description.contains("publish maven-lib")));
         assert_eq!(
             plan.required_tools,
             vec!["java".to_string(), "mvn".to_string()]
+        );
+        assert!(plan
+            .dry_run_notes
+            .iter()
+            .any(|note| note.contains("maven deploy url")));
+    }
+
+    #[test]
+    fn publish_npm_lib_plan_requires_node_tools_for_node_lib() {
+        let project_dir = repo_root().join("libs/node-lib");
+        let plan = publish_npm_lib_plan(project_dir.to_str().unwrap(), "ci").unwrap();
+        assert_eq!(
+            plan.required_tools,
+            vec!["node".to_string(), "npm".to_string()]
+        );
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.description.contains("build npm-lib")));
+        assert!(plan
+            .dry_run_notes
+            .iter()
+            .any(|note| note.contains("npm dist-tag: ci")));
+    }
+
+    #[test]
+    fn publish_maven_lib_plan_rejects_non_maven_project_directory() {
+        let project_dir = repo_root().join("libs/node-lib");
+        let error = publish_maven_lib_plan(project_dir.to_str().unwrap()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid publish target: maven-lib requires {}/pom.xml",
+                project_dir.display()
+            )
         );
     }
 

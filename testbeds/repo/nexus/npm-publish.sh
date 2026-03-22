@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: testbeds/repo/nexus/npm-publish.sh <package-dir>" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "Usage: testbeds/repo/nexus/npm-publish.sh <package-dir> [dist-tag]" >&2
   exit 1
 fi
 
@@ -11,6 +11,7 @@ registry_url="${NPM_REGISTRY_URL:-${COMPANY_CI_NEXUS_URL:-http://localhost:8081}
 registry_url="${registry_url%/}/"
 username="${COMPANY_CI_NEXUS_USERNAME:-admin}"
 email="${COMPANY_CI_NPM_EMAIL:-company-ci@example.test}"
+npm_dist_tag="${2:-${COMPANY_CI_NPM_DIST_TAG:-ci}}"
 password_file="${COMPANY_CI_NEXUS_PASSWORD_FILE:-testbeds/repo/nexus/.runtime/admin.password}"
 
 password="${COMPANY_CI_NEXUS_PASSWORD:-}"
@@ -52,7 +53,6 @@ registry=${registry_url}
 @company:registry=${registry_url}
 //${registry_host_path}:_auth=${auth}
 //${registry_host_path}:email=${email}
-//${registry_host_path}:always-auth=true
 EOF
 
-(cd "${publish_dir}" && npm publish --registry "${registry_url}" --userconfig "${npmrc_file}")
+(cd "${publish_dir}" && npm publish --tag "${npm_dist_tag}" --registry "${registry_url}" --userconfig "${npmrc_file}")

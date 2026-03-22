@@ -13,7 +13,7 @@ Run the repo from the macOS terminal or from the Linux shell inside WSL. Do not 
 ## Required tools
 
 - `cargo test` and all `company-ci` commands require a Rust toolchain with `cargo`.
-- Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 17 with Maven.
+- Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 21 with Maven.
 - `company-ci env up nexus` requires `docker` by default or `podman` when `COMPANY_CI_CONTAINER_ENGINE=podman`, plus `curl`.
 - `company-ci env up kind`, `company-ci deploy kubernetes`, and `company-ci e2e emulated` require the selected container engine, `kind`, and `kubectl`.
 - `act` is only needed for local workflow smoke tests.
@@ -26,15 +26,15 @@ Homebrew plus Docker Desktop is the shortest path:
 ```bash
 xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install rustup node@24 openjdk@17 maven kind kubectl
+brew install rustup node@24 openjdk@21 maven kind kubectl
 brew install --cask docker
 rustup default stable
 ```
 
-`node@24` and `openjdk@17` are versioned Homebrew formulae, so add them to your shell `PATH` if an older system version wins:
+`node@24` and `openjdk@21` are versioned Homebrew formulae, so add them to your shell `PATH` if an older system version wins:
 
 ```bash
-echo 'export JAVA_HOME="$(brew --prefix)/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"' >> ~/.zshrc
+echo 'export JAVA_HOME="$(brew --prefix)/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"' >> ~/.zshrc
 echo 'export PATH="$(brew --prefix)/opt/node@24/bin:$JAVA_HOME/bin:$PATH"' >> ~/.zshrc
 ```
 
@@ -67,7 +67,7 @@ Install the language toolchain inside WSL:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential ca-certificates curl git maven openjdk-17-jdk unzip zip
+sudo apt-get install -y build-essential ca-certificates curl git maven openjdk-21-jdk unzip zip
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 export NVM_DIR="$HOME/.nvm"
@@ -125,10 +125,21 @@ The default local model is Docker Desktop plus kind. `company-ci` assumes `docke
 cargo run -p company-ci -- verify --dry-run
 cargo run -p company-ci -- e2e emulated --dry-run
 cargo run -p company-ci -- env up nexus
+cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci --dry-run
+cargo run -p company-ci -- publish maven-lib libs/java-lib --dry-run
 cargo run -p company-ci -- env up kind
 ```
 
 Dry-run output includes the required tool preflight for the selected command. Real runs verify those tools on `PATH` before starting work.
+
+For hosted Maven publication, materialize a `settings.xml` file in the workflow and pass it to `company-ci` with `MAVEN_SETTINGS_PATH`, plus `MAVEN_DEPLOY_URL` and `MAVEN_SERVER_ID`. Example:
+
+```bash
+MAVEN_SETTINGS_PATH="$RUNNER_TEMP/settings.xml" \
+MAVEN_DEPLOY_URL="https://repo.example.com/repository/maven-snapshots/" \
+MAVEN_SERVER_ID="github" \
+cargo run -p company-ci -- publish maven-lib libs/java-lib
+```
 
 ## Workflow smoke tests with act
 
@@ -163,6 +174,8 @@ mvn -B -ntp -f apps/spring-api/pom.xml verify
 mvn -B -ntp -f libs/java-lib/pom.xml verify
 cargo run -p company-ci -- env up nexus
 cargo run -p company-ci -- env up kind
+cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci
+cargo run -p company-ci -- publish maven-lib libs/java-lib
 ```
 
 `libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses direct Maven goals through `company-ci`, and the emulated path now captures Nexus runtime credentials in `testbeds/repo/nexus/.runtime/` so later publish steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.

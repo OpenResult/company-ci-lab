@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: dtolnay/rust-toolchain@stable
       - name: Run sandbox deployment
         run: cargo run -p company-ci -- deploy ${{ inputs.platform }}

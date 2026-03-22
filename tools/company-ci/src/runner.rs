@@ -10,6 +10,12 @@ pub trait CommandRunner {
     fn run(&self, step: &Step) -> Result<(), Box<dyn std::error::Error>>;
 
     fn run_plan(&self, plan: &Plan, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
+        if dry_run {
+            for note in &plan.dry_run_notes {
+                println!("[dry-run] {note}");
+            }
+        }
+
         for tool in &plan.required_tools {
             if dry_run {
                 println!("[dry-run] verify required tool: {tool}");

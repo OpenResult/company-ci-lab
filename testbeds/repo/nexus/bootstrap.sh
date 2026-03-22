@@ -11,6 +11,43 @@ username="${COMPANY_CI_NEXUS_USERNAME:-admin}"
 
 mkdir -p "${state_dir}"
 
+refresh_repositories() {
+  for _ in $(seq 1 120); do
+    if curl --fail --silent --show-error -u "${username}:${password}" "${base_url}/service/rest/v1/repositories" >"${repositories_file}"; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "failed to query Nexus repositories from ${base_url}" >&2
+  exit 1
+}
+
+repository_exists() {
+  local repository="$1"
+  grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${repository}\"" "${repositories_file}"
+}
+
+create_npm_hosted_repository() {
+  curl --fail --silent --show-error \
+    -u "${username}:${password}" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    "${base_url}/service/rest/v1/repositories/npm/hosted" \
+    -d '{"name":"npm-hosted","online":true,"storage":{"blobStoreName":"default","strictContentTypeValidation":true,"writePolicy":"allow"}}' \
+    >/dev/null
+}
+
+create_maven_snapshots_repository() {
+  curl --fail --silent --show-error \
+    -u "${username}:${password}" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    "${base_url}/service/rest/v1/repositories/maven/hosted" \
+    -d '{"name":"maven-snapshots","online":true,"storage":{"blobStoreName":"default","strictContentTypeValidation":true,"writePolicy":"allow"},"maven":{"versionPolicy":"SNAPSHOT","layoutPolicy":"STRICT","contentDisposition":"ATTACHMENT"}}' \
+    >/dev/null
+}
+
 for _ in $(seq 1 120); do
   if company_ci_compose -f "${compose_file}" exec -T nexus test -f /nexus-data/admin.password >/dev/null 2>&1; then
     break
@@ -29,15 +66,20 @@ printf '%s\n' "${password}" >"${password_file}"
 chmod 600 "${password_file}"
 
 repositories_file="${state_dir}/repositories.json"
-for _ in $(seq 1 120); do
-  if curl --fail --silent --show-error -u "${username}:${password}" "${base_url}/service/rest/v1/repositories" >"${repositories_file}"; then
-    break
-  fi
-  sleep 2
-done
+refresh_repositories
+
+if ! repository_exists "maven-snapshots"; then
+  create_maven_snapshots_repository
+  refresh_repositories
+fi
+
+if ! repository_exists "npm-hosted"; then
+  create_npm_hosted_repository
+  refresh_repositories
+fi
 
 for repository in maven-snapshots npm-hosted; do
-  if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${repository}\"" "${repositories_file}"; then
+  if ! repository_exists "${repository}"; then
     echo "required Nexus repository not found: ${repository}" >&2
     exit 1
   fi

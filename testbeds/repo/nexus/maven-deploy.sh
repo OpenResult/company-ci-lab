@@ -8,11 +8,12 @@ fi
 
 pom_path="$1"
 repo_url="${MAVEN_DEPLOY_URL:-${COMPANY_CI_NEXUS_URL:-http://localhost:8081}/repository/maven-snapshots/}"
+server_id="${MAVEN_SERVER_ID:-local}"
 username="${COMPANY_CI_NEXUS_USERNAME:-admin}"
 password_file="${COMPANY_CI_NEXUS_PASSWORD_FILE:-testbeds/repo/nexus/.runtime/admin.password}"
 
 if [ -n "${MAVEN_SETTINGS_PATH:-}" ]; then
-  mvn -B -ntp -s "${MAVEN_SETTINGS_PATH}" -f "${pom_path}" -DskipTests -DaltDeploymentRepository=local::default::${repo_url} deploy
+  mvn -B -ntp -s "${MAVEN_SETTINGS_PATH}" -f "${pom_path}" -DskipTests -DaltDeploymentRepository="${server_id}::${repo_url}" deploy
   exit 0
 fi
 
@@ -37,7 +38,7 @@ cat >"${settings_file}" <<EOF
 <settings>
   <servers>
     <server>
-      <id>local</id>
+      <id>${server_id}</id>
       <username>${username}</username>
       <password>${password}</password>
     </server>
@@ -45,4 +46,4 @@ cat >"${settings_file}" <<EOF
 </settings>
 EOF
 
-mvn -B -ntp -s "${settings_file}" -f "${pom_path}" -DskipTests -DaltDeploymentRepository=local::default::${repo_url} deploy
+mvn -B -ntp -s "${settings_file}" -f "${pom_path}" -DskipTests -DaltDeploymentRepository="${server_id}::${repo_url}" deploy
