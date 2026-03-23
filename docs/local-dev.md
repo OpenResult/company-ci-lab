@@ -13,7 +13,7 @@ Run the repo from the macOS terminal or from the Linux shell inside WSL. Do not 
 ## Required tools
 
 - `cargo test` and all `company-ci` commands require a Rust toolchain with `cargo`.
-- Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 21 with Maven.
+- Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 21. Maven comes from the repo-local `./mvnw` wrapper.
 - `company-ci env up nexus` requires `docker` by default or `podman` when `COMPANY_CI_CONTAINER_ENGINE=podman`, plus `curl`.
 - `company-ci env up kind`, `company-ci deploy kubernetes`, and `company-ci e2e emulated` require the selected container engine, `kind`, and `kubectl`.
 - `company-ci deploy openshift` and `company-ci e2e openshift-local` require `oc` plus an existing OpenShift Local login.
@@ -26,7 +26,7 @@ Homebrew plus Docker Desktop is the shortest path:
 ```bash
 xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install rustup node@24 openjdk@21 maven kind kubectl
+brew install rustup node@24 openjdk@21 kind kubectl
 brew install --cask docker
 rustup default stable
 ```
@@ -45,7 +45,7 @@ cargo --version
 node --version
 npm --version
 java -version
-mvn --version
+./mvnw --version
 docker version
 kind version
 kubectl version --client
@@ -67,7 +67,7 @@ Install the language toolchain inside WSL:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential ca-certificates curl git maven openjdk-21-jdk unzip zip
+sudo apt-get install -y build-essential ca-certificates curl git openjdk-21-jdk unzip zip
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 export NVM_DIR="$HOME/.nvm"
@@ -102,7 +102,7 @@ cargo --version
 node --version
 npm --version
 java -version
-mvn --version
+./mvnw --version
 docker version
 kind version
 kubectl version --client
@@ -134,9 +134,11 @@ cargo run -p company-ci -- e2e openshift-local --dry-run
 
 Dry-run output includes the required tool preflight for the selected command. Real runs verify those tools on `PATH` before starting work.
 
+The first `./mvnw` execution downloads the pinned Maven distribution declared in `.mvn/wrapper/maven-wrapper.properties`.
+
 The workflows install the same CLI onto `PATH` and then invoke `company-ci ...` directly. Locally, `cargo run -p company-ci -- ...` is just the bootstrap path before you package or install the binary yourself.
 
-For hosted Maven publication, materialize a `settings.xml` file in the workflow and pass it to `company-ci` with `MAVEN_SETTINGS_PATH`, plus `MAVEN_DEPLOY_URL` and `MAVEN_SERVER_ID`. Example:
+For hosted Maven publication, materialize a `settings.xml` file in the workflow and pass it to `company-ci` with `MAVEN_SETTINGS_PATH`, plus `MAVEN_DEPLOY_URL` and `MAVEN_SERVER_ID`. The wrapper still supplies Maven itself. Example:
 
 ```bash
 MAVEN_SETTINGS_PATH="$RUNNER_TEMP/settings.xml" \
@@ -205,12 +207,12 @@ The most concrete local paths today are the Node and Java verification slices, p
 ```bash
 cd apps/next-web && npm run lint && npm test && npm run build
 cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm test && npm run package
-mvn -B -ntp -f apps/spring-api/pom.xml verify
-mvn -B -ntp -f libs/java-lib/pom.xml verify
+./mvnw -B -ntp -f apps/spring-api/pom.xml verify
+./mvnw -B -ntp -f libs/java-lib/pom.xml verify
 cargo run -p company-ci -- env up nexus
 cargo run -p company-ci -- env up kind
 cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci
 cargo run -p company-ci -- publish maven-lib libs/java-lib
 ```
 
-`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses direct Maven goals through `company-ci`, and the local Nexus path now captures runtime credentials in `testbeds/repo/nexus/.runtime/` so later package, image-publish, and OpenShift deploy steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.
+`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses the repo-local Maven wrapper through `company-ci`, and the local Nexus path now captures runtime credentials in `testbeds/repo/nexus/.runtime/` so later package, image-publish, and OpenShift deploy steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.

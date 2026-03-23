@@ -4,7 +4,7 @@
 
 Always-on workflow for `pull_request`, pushes to `main`, and `workflow_dispatch`. It installs the language toolchains with setup actions, uses the local `setup-company-ci` action to place the `company-ci` binary on `PATH`, and runs `company-ci verify`. The workflow now uses the current `actions/checkout`, `actions/setup-node`, and `actions/setup-java` majors that are aligned with the Node 24 transition for JavaScript-based actions.
 
-The hosted workflows are expected to install toolchains and platform CLIs up front; `company-ci` still verifies that `docker` or `podman`, `kind`, `kubectl`, `oc`, `node`, `npm`, `java`, and `mvn` exist before executing the plans that need them.
+The hosted workflows are expected to install toolchains and platform CLIs up front; `company-ci` still verifies that `docker` or `podman`, `kind`, `kubectl`, `oc`, `node`, `npm`, `java`, and the repo-local `./mvnw` wrapper exist before executing the plans that need them.
 
 That split keeps the workflow readable while the typed Rust CLI owns the actual CI logic.
 

@@ -102,7 +102,7 @@ pub fn publish_maven_lib_plan(project_dir: &str) -> Result<Plan, CompanyCiError>
             ],
         )],
     )
-    .with_required_tools(["java", "mvn"])
+    .with_required_tools(["java", "./mvnw"])
     .with_dry_run_notes([
         "publish contract: maven-lib".to_string(),
         format!("publish path: {}", resolved.project_dir_display),
@@ -177,7 +177,7 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
         steps.push(step(
             "package spring-api image inputs",
             [
-                "mvn",
+                "./mvnw",
                 "-B",
                 "-ntp",
                 "-f",
@@ -196,7 +196,7 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
             ),
         ));
         push_tool(&mut required_tools, "java");
-        push_tool(&mut required_tools, "mvn");
+        push_tool(&mut required_tools, "./mvnw");
         push_tool(&mut required_tools, engine.binary());
     }
     if steps.is_empty() {
@@ -483,7 +483,7 @@ pub fn e2e_emulated_plan(context: &ExecutionContext) -> Plan {
         "kind",
         "kubectl",
         "java",
-        "mvn",
+        "./mvnw",
         "node",
         "npm",
     ])
@@ -528,7 +528,7 @@ pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
         "curl",
         "oc",
         "java",
-        "mvn",
+        "./mvnw",
         "node",
         "npm",
         context.container_engine.binary(),
@@ -579,7 +579,7 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
             Mode::Verify => vec![step(
                 "verify spring-api",
                 [
-                    "mvn",
+                    "./mvnw",
                     "-B",
                     "-ntp",
                     "-f",
@@ -590,7 +590,7 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
             Mode::Build => vec![step(
                 "build spring-api",
                 [
-                    "mvn",
+                    "./mvnw",
                     "-B",
                     "-ntp",
                     "-f",
@@ -601,12 +601,19 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
             )],
             Mode::Test => vec![step(
                 "test spring-api",
-                ["mvn", "-B", "-ntp", "-f", "apps/spring-api/pom.xml", "test"],
+                [
+                    "./mvnw",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "apps/spring-api/pom.xml",
+                    "test",
+                ],
             )],
             Mode::Package => vec![step(
                 "package spring-api",
                 [
-                    "mvn",
+                    "./mvnw",
                     "-B",
                     "-ntp",
                     "-f",
@@ -631,12 +638,19 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
         steps.extend(match mode {
             Mode::Verify => vec![step(
                 "verify java-lib",
-                ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "verify"],
+                [
+                    "./mvnw",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "libs/java-lib/pom.xml",
+                    "verify",
+                ],
             )],
             Mode::Build => vec![step(
                 "build java-lib",
                 [
-                    "mvn",
+                    "./mvnw",
                     "-B",
                     "-ntp",
                     "-f",
@@ -647,12 +661,19 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
             )],
             Mode::Test => vec![step(
                 "test java-lib",
-                ["mvn", "-B", "-ntp", "-f", "libs/java-lib/pom.xml", "test"],
+                [
+                    "./mvnw",
+                    "-B",
+                    "-ntp",
+                    "-f",
+                    "libs/java-lib/pom.xml",
+                    "test",
+                ],
             )],
             Mode::Package => vec![step(
                 "package java-lib",
                 [
-                    "mvn",
+                    "./mvnw",
                     "-B",
                     "-ntp",
                     "-f",
@@ -901,7 +922,7 @@ fn sh_quote(value: &str) -> String {
 
 fn add_java_tools(tools: &mut Vec<&'static str>) {
     push_tool(tools, "java");
-    push_tool(tools, "mvn");
+    push_tool(tools, "./mvnw");
 }
 
 fn add_node_tools(tools: &mut Vec<&'static str>) {
@@ -979,7 +1000,7 @@ mod tests {
             .join(" ")
             .contains("publish maven-lib libs/java-lib")));
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
-        assert!(plan.required_tools.iter().any(|tool| tool == "mvn"));
+        assert!(plan.required_tools.iter().any(|tool| tool == "./mvnw"));
         assert!(plan.required_tools.iter().any(|tool| tool == "docker"));
         assert!(!plan.required_tools.iter().any(|tool| tool == "cargo"));
     }
@@ -1008,7 +1029,7 @@ mod tests {
             .any(|step| step.description.contains("publish maven-lib")));
         assert_eq!(
             plan.required_tools,
-            vec!["java".to_string(), "mvn".to_string()]
+            vec!["java".to_string(), "./mvnw".to_string()]
         );
         assert!(plan
             .dry_run_notes

@@ -12,7 +12,7 @@ This is intentional because workflow YAML is not treated as the long-term CI DSL
 
 - `plan.rs` builds ordered command plans for each subcommand.
 - The command palette is the public CI API for both local shells and GitHub workflows.
-- Each plan declares the external tools it requires so the CLI can fail fast on missing `mvn`, `node`, `docker` or `podman`, `oc`, and similar binaries.
+- Each plan declares the external tools it requires so the CLI can fail fast on missing `./mvnw`, `node`, `docker` or `podman`, `oc`, and similar binaries.
 - `runner.rs` abstracts side effects so unit tests can verify planning without shelling out, and performs tool preflight before non-dry-run execution.
 - `commands.rs` maps CLI inputs to plans.
 - `container_engine.rs` centralizes `COMPANY_CI_CONTAINER_ENGINE` parsing so plans and helper scripts can target either Docker or Podman with the same top-level commands.

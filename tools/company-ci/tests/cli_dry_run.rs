@@ -57,7 +57,7 @@ fn publish_maven_dry_run_prints_contract_path_and_destination() {
     )));
     assert!(stdout
         .contains("[dry-run] maven deploy url: http://localhost:8081/repository/maven-snapshots/"));
-    assert!(stdout.contains("[dry-run] verify required tool: mvn"));
+    assert!(stdout.contains("[dry-run] verify required tool: ./mvnw"));
 }
 
 #[test]
