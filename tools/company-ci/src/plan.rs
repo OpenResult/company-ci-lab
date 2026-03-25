@@ -1,8 +1,11 @@
 use crate::container_engine::ContainerEngine;
 use crate::context::ExecutionContext;
 use crate::error::CompanyCiError;
-use crate::image_config::{ApplicationImage, ImageProfile, ImageSettings};
+use crate::image_config::{ImageProfile, ImageSettings};
 use crate::impact::Area;
+use crate::openshift_config::OpenshiftConfig;
+use crate::repo_layout::{ApplicationLayout, LibraryLayout, RepoLayout};
+use crate::requirements::EnvRequirement;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,6 +20,7 @@ pub struct Step {
 pub struct Plan {
     pub name: String,
     pub required_tools: Vec<String>,
+    pub required_env: Vec<EnvRequirement>,
     pub dry_run_notes: Vec<String>,
     pub steps: Vec<Step>,
 }
@@ -26,6 +30,7 @@ impl Plan {
         Self {
             name: name.into(),
             required_tools: Vec::new(),
+            required_env: Vec::new(),
             dry_run_notes: Vec::new(),
             steps,
         }
@@ -45,6 +50,18 @@ impl Plan {
         self
     }
 
+    pub fn with_required_env<I>(mut self, requirements: I) -> Self
+    where
+        I: IntoIterator<Item = EnvRequirement>,
+    {
+        for requirement in requirements {
+            if !self.required_env.contains(&requirement) {
+                self.required_env.push(requirement);
+            }
+        }
+        self
+    }
+
     pub fn with_dry_run_notes<I, S>(mut self, notes: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -56,14 +73,15 @@ impl Plan {
 }
 
 pub fn verify_plan(context: &ExecutionContext) -> Plan {
+    let layout = &context.repo_layout;
     let mut steps = vec![
         step(
             "validate deployment manifests exist",
-            ["test", "-f", "deploy/base/next-web/kustomization.yaml"],
+            ["test", "-f", layout.next_web_kustomization_path],
         ),
         step(
             "validate spring api containerfile exists",
-            ["test", "-f", "apps/spring-api/Containerfile"],
+            ["test", "-f", layout.spring_api.containerfile_path],
         ),
     ];
     steps.extend(component_steps(context, Mode::Verify));
@@ -85,7 +103,10 @@ pub fn package_plan(context: &ExecutionContext) -> Plan {
         .with_required_tools(component_required_tools(context, Mode::Package))
 }
 
-pub fn publish_maven_lib_plan(project_dir: &str) -> Result<Plan, CompanyCiError> {
+pub fn publish_maven_lib_plan(
+    layout: &RepoLayout,
+    project_dir: &str,
+) -> Result<Plan, CompanyCiError> {
     let resolved = resolve_publish_project(project_dir, "pom.xml", "maven-lib")?;
     let deploy_url = env::var("MAVEN_DEPLOY_URL")
         .unwrap_or_else(|_| "http://localhost:8081/repository/maven-snapshots/".to_string());
@@ -97,7 +118,7 @@ pub fn publish_maven_lib_plan(project_dir: &str) -> Result<Plan, CompanyCiError>
             format!("publish maven-lib from {}", resolved.project_dir_display),
             vec![
                 "sh".to_string(),
-                "testbeds/repo/nexus/maven-deploy.sh".to_string(),
+                layout.maven_publish_helper_path.to_string(),
                 resolved.manifest_path_display.clone(),
             ],
         )],
@@ -111,7 +132,11 @@ pub fn publish_maven_lib_plan(project_dir: &str) -> Result<Plan, CompanyCiError>
     ]))
 }
 
-pub fn publish_npm_lib_plan(project_dir: &str, tag: &str) -> Result<Plan, CompanyCiError> {
+pub fn publish_npm_lib_plan(
+    layout: &RepoLayout,
+    project_dir: &str,
+    tag: &str,
+) -> Result<Plan, CompanyCiError> {
     validate_npm_tag(tag)?;
     let resolved = resolve_publish_project(project_dir, "package.json", "npm-lib")?;
     let registry_url = env::var("NPM_REGISTRY_URL")
@@ -134,7 +159,7 @@ pub fn publish_npm_lib_plan(project_dir: &str, tag: &str) -> Result<Plan, Compan
                 format!("publish npm-lib from {}", resolved.project_dir_display),
                 vec![
                     "sh".to_string(),
-                    "testbeds/repo/nexus/npm-publish.sh".to_string(),
+                    layout.npm_publish_helper_path.to_string(),
                     resolved.project_dir_display.clone(),
                     tag.to_string(),
                 ],
@@ -151,28 +176,37 @@ pub fn publish_npm_lib_plan(project_dir: &str, tag: &str) -> Result<Plan, Compan
 }
 
 pub fn image_build_plan(context: &ExecutionContext) -> Plan {
+    let layout = &context.repo_layout;
     let mut steps = Vec::new();
     let mut required_tools = Vec::new();
     let engine = context.container_engine;
     let image_settings = ImageSettings::from_env(ImageProfile::Local);
+    let image_platform = env_var("COMPANY_CI_IMAGE_PLATFORM");
+
     if context.affects(Area::NextWeb) {
         steps.push(step(
             "build next-web image inputs",
-            ["sh", "-c", "cd apps/next-web && npm run build"],
+            [
+                "sh",
+                "-c",
+                &format!("cd {} && npm run build", layout.next_web.project_dir),
+            ],
         ));
         steps.push(shell_step(
             "build next-web image",
             &image_build_command(
                 engine,
-                "apps/next-web/Containerfile",
-                &image_settings.push_ref(ApplicationImage::NextWeb),
-                "apps/next-web",
+                layout.next_web.containerfile_path,
+                &image_settings.push_ref(layout.next_web.image),
+                layout.next_web.project_dir,
+                image_platform.as_deref(),
             ),
         ));
         push_tool(&mut required_tools, "node");
         push_tool(&mut required_tools, "npm");
         push_tool(&mut required_tools, engine.binary());
     }
+
     if context.affects(Area::SpringApi) {
         steps.push(step(
             "package spring-api image inputs",
@@ -181,7 +215,7 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
                 "-B",
                 "-ntp",
                 "-f",
-                "apps/spring-api/pom.xml",
+                layout.spring_api.manifest_path,
                 "-DskipTests",
                 "package",
             ],
@@ -190,316 +224,103 @@ pub fn image_build_plan(context: &ExecutionContext) -> Plan {
             "build spring-api image",
             &image_build_command(
                 engine,
-                "apps/spring-api/Containerfile",
-                &image_settings.push_ref(ApplicationImage::SpringApi),
-                "apps/spring-api",
+                layout.spring_api.containerfile_path,
+                &image_settings.push_ref(layout.spring_api.image),
+                layout.spring_api.project_dir,
+                image_platform.as_deref(),
             ),
         ));
         push_tool(&mut required_tools, "java");
         push_tool(&mut required_tools, "./mvnw");
         push_tool(&mut required_tools, engine.binary());
     }
+
     if steps.is_empty() {
         steps.push(noop_step("no impacted application images detected"));
     }
+
     Plan::new("image-build", steps).with_required_tools(required_tools)
 }
 
-pub fn image_publish_plan(context: &ExecutionContext) -> Plan {
+pub fn image_publish_plan(context: &ExecutionContext) -> Result<Plan, CompanyCiError> {
     let mut steps = Vec::new();
     let mut required_tools = Vec::new();
+    let mut required_env = Vec::new();
     let engine = context.container_engine;
     let image_settings = ImageSettings::from_env(ImageProfile::Local);
+    image_settings.validate_publish_contract("image-publish")?;
+
     if (context.affects(Area::NextWeb) || context.affects(Area::SpringApi))
         && image_settings.has_registry_auth()
     {
         steps.push(step(
             "authenticate to image registry",
-            ["sh", "testbeds/lib/container-registry-login.sh"],
+            [
+                "sh",
+                context.repo_layout.container_registry_login_helper_path,
+            ],
         ));
         push_tool(&mut required_tools, engine.binary());
+        required_env.push(EnvRequirement::secret("COMPANY_CI_IMAGE_REGISTRY_USERNAME"));
+        required_env.push(EnvRequirement::secret_or_file(
+            "COMPANY_CI_IMAGE_REGISTRY_PASSWORD",
+            "COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE",
+        ));
     }
+
     if context.affects(Area::NextWeb) {
         steps.push(shell_step(
             "push next-web image",
-            &image_push_command(engine, &image_settings.push_ref(ApplicationImage::NextWeb)),
+            &image_push_command(
+                engine,
+                &image_settings.push_ref(context.repo_layout.next_web.image),
+            ),
         ));
         push_tool(&mut required_tools, engine.binary());
     }
+
     if context.affects(Area::SpringApi) {
         steps.push(shell_step(
             "push spring-api image",
             &image_push_command(
                 engine,
-                &image_settings.push_ref(ApplicationImage::SpringApi),
+                &image_settings.push_ref(context.repo_layout.spring_api.image),
             ),
         ));
         push_tool(&mut required_tools, engine.binary());
     }
+
     if steps.is_empty() {
         steps.push(noop_step("no impacted application images detected"));
     }
-    Plan::new("image-publish", steps).with_required_tools(required_tools)
+
+    Ok(Plan::new("image-publish", steps)
+        .with_required_tools(required_tools)
+        .with_required_env(required_env))
 }
 
-pub fn deploy_kubernetes_plan(_context: &ExecutionContext) -> Plan {
-    let image_settings = ImageSettings::from_env(ImageProfile::Local);
-    Plan::new(
-        "deploy-kubernetes",
-        vec![
-            step(
-                "apply kind overlay",
-                ["kubectl", "apply", "-k", "deploy/kind/overlays/ci"],
-            ),
-            shell_step(
-                "set next-web image",
-                &format!(
-                    "kubectl set image deployment/next-web next-web={}",
-                    sh_quote(&image_settings.pull_ref(ApplicationImage::NextWeb))
-                ),
-            ),
-            shell_step(
-                "set spring-api image",
-                &format!(
-                    "kubectl set image deployment/spring-api spring-api={}",
-                    sh_quote(&image_settings.pull_ref(ApplicationImage::SpringApi))
-                ),
-            ),
-            step(
-                "verify next-web rollout",
-                ["kubectl", "rollout", "status", "deployment/next-web"],
-            ),
-            step(
-                "verify spring-api rollout",
-                ["kubectl", "rollout", "status", "deployment/spring-api"],
-            ),
-            step(
-                "check next-web homepage",
-                [
-                    "sh",
-                    "testbeds/kind/check-service.sh",
-                    "next-web",
-                    "18080",
-                    "80",
-                    "/",
-                    "company-ci next-web",
-                ],
-            ),
-            step(
-                "check spring-api health endpoint",
-                [
-                    "sh",
-                    "testbeds/kind/check-service.sh",
-                    "spring-api",
-                    "18081",
-                    "80",
-                    "/api/health",
-                    "ok",
-                ],
-            ),
-        ],
-    )
-    .with_required_tools(["kubectl", "curl"])
-}
-
-pub fn deploy_openshift_plan(_context: &ExecutionContext) -> Plan {
-    let image_settings = ImageSettings::from_env(ImageProfile::OpenshiftLocal);
-    let env_defaults = openshift_local_default_env(&image_settings);
-    Plan::new(
+pub fn deploy_openshift_plan(context: &ExecutionContext) -> Result<Plan, CompanyCiError> {
+    let openshift = OpenshiftConfig::from_env("deploy-openshift")?;
+    let layout = &context.repo_layout;
+    Ok(Plan::new(
         "deploy-openshift",
-        vec![
-            step(
-                "verify OpenShift login",
-                ["sh", "testbeds/openshift-local/scripts/login.sh"],
-            ),
-            shell_step(
-                "apply registry pull secret",
-                &command_with_default_env(
-                    &env_defaults,
-                    "sh testbeds/openshift-local/apply-registry-pull-secret.sh company-ci-registry",
-                ),
-            ),
-            step(
-                "apply openshift dev overlay",
-                ["oc", "apply", "-k", "deploy/openshift/overlays/dev"],
-            ),
-            shell_step(
-                "set next-web image",
-                &format!(
-                    "oc set image deployment/next-web next-web={}",
-                    sh_quote(&image_settings.pull_ref(ApplicationImage::NextWeb))
-                ),
-            ),
-            shell_step(
-                "set spring-api image",
-                &format!(
-                    "oc set image deployment/spring-api spring-api={}",
-                    sh_quote(&image_settings.pull_ref(ApplicationImage::SpringApi))
-                ),
-            ),
-            step(
-                "verify next-web rollout",
-                ["oc", "rollout", "status", "deployment/next-web"],
-            ),
-            step(
-                "verify spring-api rollout",
-                ["oc", "rollout", "status", "deployment/spring-api"],
-            ),
-            step(
-                "check next-web route",
-                [
-                    "sh",
-                    "testbeds/openshift-local/check-route.sh",
-                    "next-web",
-                    "/",
-                    "company-ci next-web",
-                ],
-            ),
-            step(
-                "check spring-api route",
-                [
-                    "sh",
-                    "testbeds/openshift-local/check-route.sh",
-                    "spring-api",
-                    "/api/health",
-                    "ok",
-                ],
-            ),
-        ],
+        openshift_deploy_steps(layout, &openshift),
     )
     .with_required_tools(["oc", "curl"])
-    .with_dry_run_notes([
-        format!(
-            "openshift image pull registry: {}",
-            image_settings.pull_registry()
-        ),
-        format!("openshift image namespace: {}", image_settings.namespace()),
-        format!("openshift image tag: {}", image_settings.tag()),
-    ])
+    .with_required_env(openshift_deploy_requirements())
+    .with_dry_run_notes([format!(
+        "openshift skip tls verify: {}",
+        openshift.skip_tls_verify()
+    )]))
 }
 
-pub fn env_up_kind_plan(context: &ExecutionContext) -> Plan {
-    let create_cluster_command = kind_command(
-        context.container_engine,
-        "create cluster --config testbeds/kind/cluster-config.yaml",
-    );
-    Plan::new(
-        "env-up-kind",
+pub fn e2e_openshift_plan(context: &ExecutionContext) -> Result<Plan, CompanyCiError> {
+    let image_settings = openshift_e2e_settings();
+    let env_defaults = openshift_default_env(&image_settings);
+    let openshift = OpenshiftConfig::from_env("e2e-openshift")?;
+    Ok(Plan::new(
+        "e2e-openshift",
         vec![
-            shell_step("create kind cluster", &create_cluster_command),
-            step(
-                "start local registry helper",
-                ["sh", "testbeds/kind/registry.sh", "up"],
-            ),
-        ],
-    )
-    .with_required_tools(["kind", context.container_engine.binary(), "kubectl"])
-}
-
-pub fn env_down_kind_plan(context: &ExecutionContext) -> Plan {
-    let delete_cluster_command = format!(
-        "{} || true",
-        kind_command(context.container_engine, "delete cluster")
-    );
-    Plan::new(
-        "env-down-kind",
-        vec![
-            shell_step("delete kind cluster", &delete_cluster_command),
-            step(
-                "stop local registry helper",
-                ["sh", "testbeds/kind/registry.sh", "down"],
-            ),
-        ],
-    )
-    .with_required_tools(["kind", context.container_engine.binary()])
-}
-
-pub fn env_up_nexus_plan(context: &ExecutionContext) -> Plan {
-    let compose_up_command = compose_command(
-        context.container_engine,
-        "testbeds/repo/nexus/compose.yaml",
-        "up -d",
-    );
-    Plan::new(
-        "env-up-nexus",
-        vec![
-            shell_step("start nexus", &compose_up_command),
-            step(
-                "wait for nexus and capture runtime state",
-                ["sh", "testbeds/repo/nexus/bootstrap.sh"],
-            ),
-        ],
-    )
-    .with_required_tools([context.container_engine.binary(), "curl"])
-}
-
-pub fn env_down_nexus_plan(context: &ExecutionContext) -> Plan {
-    let compose_down_command = compose_command(
-        context.container_engine,
-        "testbeds/repo/nexus/compose.yaml",
-        "down -v",
-    );
-    Plan::new(
-        "env-down-nexus",
-        vec![
-            shell_step("stop nexus", &compose_down_command),
-            step(
-                "remove nexus runtime state",
-                ["sh", "-c", "rm -rf testbeds/repo/nexus/.runtime"],
-            ),
-        ],
-    )
-    .with_required_tools([context.container_engine.binary()])
-}
-
-pub fn e2e_emulated_plan(context: &ExecutionContext) -> Plan {
-    Plan::new(
-        "e2e-emulated",
-        vec![
-            company_ci_step(context, "start nexus", &["env", "up", "nexus"]),
-            company_ci_step(context, "create kind cluster", &["env", "up", "kind"]),
-            company_ci_step(context, "verify all components", &["verify"]),
-            company_ci_step(context, "package artifacts", &["package"]),
-            company_ci_step(
-                context,
-                "publish node-lib",
-                &["publish", "npm-lib", "libs/node-lib", "--tag", "ci"],
-            ),
-            company_ci_step(
-                context,
-                "publish java-lib",
-                &["publish", "maven-lib", "libs/java-lib"],
-            ),
-            company_ci_step(context, "build images", &["image", "build"]),
-            company_ci_step(context, "publish images", &["image", "publish"]),
-            company_ci_step(context, "deploy to kind", &["deploy", "kubernetes"]),
-            company_ci_step(context, "tear down kind", &["env", "down", "kind"]),
-            company_ci_step(context, "tear down nexus", &["env", "down", "nexus"]),
-        ],
-    )
-    .with_required_tools([
-        "curl",
-        context.container_engine.binary(),
-        "kind",
-        "kubectl",
-        "java",
-        "./mvnw",
-        "node",
-        "npm",
-    ])
-}
-
-pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
-    let image_settings = openshift_local_e2e_settings();
-    let env_defaults = openshift_local_default_env(&image_settings);
-    Plan::new(
-        "e2e-openshift-local",
-        vec![
-            company_ci_step(context, "start nexus", &["env", "up", "nexus"]),
-            step(
-                "verify OpenShift Local login",
-                ["sh", "testbeds/openshift-local/scripts/login.sh"],
-            ),
             company_ci_step(context, "verify all components", &["verify"]),
             shell_step(
                 "build images",
@@ -533,10 +354,16 @@ pub fn e2e_openshift_local_plan(context: &ExecutionContext) -> Plan {
         "npm",
         context.container_engine.binary(),
     ])
-    .with_dry_run_notes([format!(
-        "openshift-local image tag: {}",
-        image_settings.tag()
-    )])
+    .with_required_env(OpenshiftConfig::auth_requirements())
+    .with_dry_run_notes([
+        format!("openshift image tag: {}", image_settings.tag()),
+        format!(
+            "openshift image platform: {}",
+            env_var("COMPANY_CI_IMAGE_PLATFORM")
+                .unwrap_or_else(|| default_openshift_image_platform().to_string())
+        ),
+        format!("openshift skip tls verify: {}", openshift.skip_tls_verify()),
+    ]))
 }
 
 #[derive(Clone, Copy)]
@@ -548,141 +375,23 @@ enum Mode {
 }
 
 fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
+    let layout = &context.repo_layout;
     let mut steps = Vec::new();
 
     if context.affects(Area::NextWeb) {
-        steps.extend(match mode {
-            Mode::Verify => vec![step(
-                "run next-web quality checks",
-                [
-                    "sh",
-                    "-c",
-                    "cd apps/next-web && npm run lint && npm test && npm run build",
-                ],
-            )],
-            Mode::Build => vec![step(
-                "build next-web",
-                ["sh", "-c", "cd apps/next-web && npm run build"],
-            )],
-            Mode::Test => vec![step(
-                "test next-web",
-                ["sh", "-c", "cd apps/next-web && npm test"],
-            )],
-            Mode::Package => vec![noop_step(
-                "next-web packaging is handled through image commands",
-            )],
-        });
+        steps.extend(node_component_steps(&layout.next_web, mode));
     }
 
     if context.affects(Area::SpringApi) {
-        steps.extend(match mode {
-            Mode::Verify => vec![step(
-                "verify spring-api",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "apps/spring-api/pom.xml",
-                    "verify",
-                ],
-            )],
-            Mode::Build => vec![step(
-                "build spring-api",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "apps/spring-api/pom.xml",
-                    "-DskipTests",
-                    "compile",
-                ],
-            )],
-            Mode::Test => vec![step(
-                "test spring-api",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "apps/spring-api/pom.xml",
-                    "test",
-                ],
-            )],
-            Mode::Package => vec![step(
-                "package spring-api",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "apps/spring-api/pom.xml",
-                    "-DskipTests",
-                    "package",
-                ],
-            )],
-        });
+        steps.extend(maven_component_steps(&layout.spring_api, mode));
     }
 
     if context.affects(Area::NodeLib) {
-        steps.extend(match mode {
-            Mode::Verify => vec![step("run node-lib checks", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm test && npm run package"])],
-            Mode::Build => vec![step("build node-lib", ["sh", "-c", "cd libs/node-lib && npm run lint && npm run typecheck && npm run build"])],
-            Mode::Test => vec![step("test node-lib", ["sh", "-c", "cd libs/node-lib && npm run build && npm test"])],
-            Mode::Package => vec![step("package node-lib", ["sh", "-c", "mkdir -p target/node-packages && cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm pack --pack-destination ../../target/node-packages"])],
-        });
+        steps.extend(node_library_steps(&layout.node_lib, mode));
     }
 
     if context.affects(Area::JavaLib) {
-        steps.extend(match mode {
-            Mode::Verify => vec![step(
-                "verify java-lib",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "libs/java-lib/pom.xml",
-                    "verify",
-                ],
-            )],
-            Mode::Build => vec![step(
-                "build java-lib",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "libs/java-lib/pom.xml",
-                    "-DskipTests",
-                    "compile",
-                ],
-            )],
-            Mode::Test => vec![step(
-                "test java-lib",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "libs/java-lib/pom.xml",
-                    "test",
-                ],
-            )],
-            Mode::Package => vec![step(
-                "package java-lib",
-                [
-                    "./mvnw",
-                    "-B",
-                    "-ntp",
-                    "-f",
-                    "libs/java-lib/pom.xml",
-                    "-DskipTests",
-                    "package",
-                ],
-            )],
-        });
+        steps.extend(maven_library_steps(&layout.java_lib, mode));
     }
 
     if steps.is_empty() {
@@ -690,6 +399,182 @@ fn component_steps(context: &ExecutionContext, mode: Mode) -> Vec<Step> {
     }
 
     steps
+}
+
+fn node_component_steps(component: &ApplicationLayout, mode: Mode) -> Vec<Step> {
+    match mode {
+        Mode::Verify => vec![step(
+            &format!("run {} quality checks", component.name),
+            [
+                "sh",
+                "-c",
+                &format!(
+                    "cd {} && npm run lint && npm test && npm run build",
+                    component.project_dir
+                ),
+            ],
+        )],
+        Mode::Build => vec![step(
+            &format!("build {}", component.name),
+            [
+                "sh",
+                "-c",
+                &format!("cd {} && npm run build", component.project_dir),
+            ],
+        )],
+        Mode::Test => vec![step(
+            &format!("test {}", component.name),
+            [
+                "sh",
+                "-c",
+                &format!("cd {} && npm test", component.project_dir),
+            ],
+        )],
+        Mode::Package => vec![noop_step(
+            "next-web packaging is handled through image commands",
+        )],
+    }
+}
+
+fn maven_component_steps(component: &ApplicationLayout, mode: Mode) -> Vec<Step> {
+    match mode {
+        Mode::Verify => vec![step(
+            &format!("verify {}", component.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                component.manifest_path,
+                "verify",
+            ],
+        )],
+        Mode::Build => vec![step(
+            &format!("build {}", component.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                component.manifest_path,
+                "-DskipTests",
+                "compile",
+            ],
+        )],
+        Mode::Test => vec![step(
+            &format!("test {}", component.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                component.manifest_path,
+                "test",
+            ],
+        )],
+        Mode::Package => vec![step(
+            &format!("package {}", component.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                component.manifest_path,
+                "-DskipTests",
+                "package",
+            ],
+        )],
+    }
+}
+
+fn node_library_steps(library: &LibraryLayout, mode: Mode) -> Vec<Step> {
+    match mode {
+        Mode::Verify => vec![step(
+            &format!("run {} checks", library.name),
+            [
+                "sh",
+                "-c",
+                &format!(
+                    "cd {} && npm run lint && npm run typecheck && npm run build && npm test && npm run package",
+                    library.project_dir
+                ),
+            ],
+        )],
+        Mode::Build => vec![step(
+            &format!("build {}", library.name),
+            [
+                "sh",
+                "-c",
+                &format!(
+                    "cd {} && npm run lint && npm run typecheck && npm run build",
+                    library.project_dir
+                ),
+            ],
+        )],
+        Mode::Test => vec![step(
+            &format!("test {}", library.name),
+            [
+                "sh",
+                "-c",
+                &format!("cd {} && npm run build && npm test", library.project_dir),
+            ],
+        )],
+        Mode::Package => vec![step(
+            &format!("package {}", library.name),
+            [
+                "sh",
+                "-c",
+                &format!(
+                    "mkdir -p target/node-packages && cd {} && npm run lint && npm run typecheck && npm run build && npm pack --pack-destination ../../target/node-packages",
+                    library.project_dir
+                ),
+            ],
+        )],
+    }
+}
+
+fn maven_library_steps(library: &LibraryLayout, mode: Mode) -> Vec<Step> {
+    match mode {
+        Mode::Verify => vec![step(
+            &format!("verify {}", library.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                library.manifest_path,
+                "verify",
+            ],
+        )],
+        Mode::Build => vec![step(
+            &format!("build {}", library.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                library.manifest_path,
+                "-DskipTests",
+                "compile",
+            ],
+        )],
+        Mode::Test => vec![step(
+            &format!("test {}", library.name),
+            ["./mvnw", "-B", "-ntp", "-f", library.manifest_path, "test"],
+        )],
+        Mode::Package => vec![step(
+            &format!("package {}", library.name),
+            [
+                "./mvnw",
+                "-B",
+                "-ntp",
+                "-f",
+                library.manifest_path,
+                "-DskipTests",
+                "package",
+            ],
+        )],
+    }
 }
 
 fn component_required_tools(context: &ExecutionContext, mode: Mode) -> Vec<&'static str> {
@@ -727,6 +612,90 @@ fn component_required_tools(context: &ExecutionContext, mode: Mode) -> Vec<&'sta
     }
 
     tools
+}
+
+fn openshift_deploy_steps(layout: &RepoLayout, openshift: &OpenshiftConfig) -> Vec<Step> {
+    vec![
+        shell_step("log in to OpenShift", &openshift.login_command()),
+        step(
+            "apply registry pull secret",
+            [
+                "sh",
+                layout.openshift_pull_secret_helper_path,
+                "company-ci-registry",
+            ],
+        ),
+        step(
+            "apply openshift dev overlay",
+            ["oc", "apply", "-k", layout.openshift_overlay_path],
+        ),
+        shell_step(
+            "set next-web image",
+            &format!(
+                "oc set image deployment/{} {}={}",
+                layout.next_web.deployment_name,
+                layout.next_web.container_name,
+                openshift_image_ref_expression(&layout.next_web)
+            ),
+        ),
+        shell_step(
+            "set spring-api image",
+            &format!(
+                "oc set image deployment/{} {}={}",
+                layout.spring_api.deployment_name,
+                layout.spring_api.container_name,
+                openshift_image_ref_expression(&layout.spring_api)
+            ),
+        ),
+        step(
+            "verify next-web rollout",
+            ["oc", "rollout", "status", "deployment/next-web"],
+        ),
+        step(
+            "verify spring-api rollout",
+            ["oc", "rollout", "status", "deployment/spring-api"],
+        ),
+        step(
+            "check next-web route",
+            [
+                "sh",
+                layout.openshift_route_check_helper_path,
+                layout.next_web.name,
+                layout.next_web.route_path,
+                layout.next_web.route_expected_text,
+            ],
+        ),
+        step(
+            "check spring-api route",
+            [
+                "sh",
+                layout.openshift_route_check_helper_path,
+                layout.spring_api.name,
+                layout.spring_api.route_path,
+                layout.spring_api.route_expected_text,
+            ],
+        ),
+    ]
+}
+
+fn openshift_deploy_requirements() -> Vec<EnvRequirement> {
+    let mut requirements = OpenshiftConfig::auth_requirements();
+    requirements.push(EnvRequirement::variable("COMPANY_CI_IMAGE_PULL_REGISTRY"));
+    requirements.push(EnvRequirement::variable("COMPANY_CI_IMAGE_NAMESPACE"));
+    requirements.push(EnvRequirement::variable("COMPANY_CI_IMAGE_TAG"));
+    requirements.push(EnvRequirement::secret("COMPANY_CI_IMAGE_REGISTRY_USERNAME"));
+    requirements.push(EnvRequirement::secret_or_file(
+        "COMPANY_CI_IMAGE_REGISTRY_PASSWORD",
+        "COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE",
+    ));
+    requirements
+}
+
+fn openshift_image_ref_expression(app: &ApplicationLayout) -> String {
+    format!(
+        "\"${{{}:-${{COMPANY_CI_IMAGE_PULL_REGISTRY}}/${{COMPANY_CI_IMAGE_NAMESPACE}}/{}:${{COMPANY_CI_IMAGE_TAG}}}}\"",
+        app.image_override_env, app.name
+    )
 }
 
 struct ResolvedPublishProject {
@@ -813,35 +782,24 @@ fn company_ci_shell_command(context: &ExecutionContext, args: &[&str]) -> String
     command.join(" ")
 }
 
-fn kind_command(engine: ContainerEngine, operation: &str) -> String {
-    match engine.kind_provider_env() {
-        Some(provider_env) => format!("{provider_env} kind {operation}"),
-        None => format!("kind {operation}"),
-    }
-}
-
-fn compose_command(engine: ContainerEngine, compose_file: &str, operation: &str) -> String {
-    format!(
-        "{} compose -f {} {}",
-        engine.binary(),
-        compose_file,
-        operation
-    )
-}
-
 fn image_build_command(
     engine: ContainerEngine,
     containerfile: &str,
     image_ref: &str,
     build_context: &str,
+    image_platform: Option<&str>,
 ) -> String {
-    format!(
-        "{} build -f {} -t {} {}",
-        engine.binary(),
-        sh_quote(containerfile),
-        sh_quote(image_ref),
-        sh_quote(build_context)
-    )
+    let mut command = vec![engine.binary().to_string(), "build".to_string()];
+    if let Some(platform) = image_platform {
+        command.push("--platform".to_string());
+        command.push(sh_quote(platform));
+    }
+    command.push("-f".to_string());
+    command.push(sh_quote(containerfile));
+    command.push("-t".to_string());
+    command.push(sh_quote(image_ref));
+    command.push(sh_quote(build_context));
+    command.join(" ")
 }
 
 fn image_push_command(engine: ContainerEngine, image_ref: &str) -> String {
@@ -854,7 +812,7 @@ fn image_push_command(engine: ContainerEngine, image_ref: &str) -> String {
     }
 }
 
-fn openshift_local_e2e_settings() -> ImageSettings {
+fn openshift_e2e_settings() -> ImageSettings {
     let settings = ImageSettings::from_env(ImageProfile::OpenshiftLocal);
     if env_var_is_nonempty("COMPANY_CI_IMAGE_TAG") {
         settings
@@ -863,7 +821,7 @@ fn openshift_local_e2e_settings() -> ImageSettings {
     }
 }
 
-fn openshift_local_default_env(settings: &ImageSettings) -> Vec<(&'static str, String)> {
+fn openshift_default_env(settings: &ImageSettings) -> Vec<(&'static str, String)> {
     let mut defaults = vec![
         (
             "COMPANY_CI_IMAGE_PUSH_REGISTRY",
@@ -878,6 +836,10 @@ fn openshift_local_default_env(settings: &ImageSettings) -> Vec<(&'static str, S
             settings.namespace().to_string(),
         ),
         ("COMPANY_CI_IMAGE_TAG", settings.tag().to_string()),
+        (
+            "COMPANY_CI_IMAGE_PLATFORM",
+            default_openshift_image_platform().to_string(),
+        ),
     ];
 
     if let Some(username) = settings.registry_username() {
@@ -903,10 +865,21 @@ fn command_with_default_env(defaults: &[(&str, String)], command: &str) -> Strin
 }
 
 fn env_var_is_nonempty(name: &str) -> bool {
-    env::var(name)
-        .ok()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
+    env_var(name).is_some()
+}
+
+fn env_var(name: &str) -> Option<String> {
+    env::var(name).ok().and_then(|value| {
+        if value.trim().is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    })
+}
+
+fn default_openshift_image_platform() -> &'static str {
+    "linux/amd64"
 }
 
 fn generate_unique_local_tag() -> String {
@@ -939,13 +912,14 @@ fn push_tool(tools: &mut Vec<&'static str>, tool: &'static str) {
 fn step<const N: usize>(description: &str, command: [&str; N]) -> Step {
     Step {
         description: description.to_string(),
-        command: command.iter().map(|p| p.to_string()).collect(),
+        command: command.iter().map(|part| (*part).to_string()).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repo_layout::RepoLayout;
     use std::path::PathBuf;
 
     fn context(areas: &[Area]) -> ExecutionContext {
@@ -953,6 +927,7 @@ mod tests {
             company_ci_binary: "company-ci".to_string(),
             container_engine: ContainerEngine::Docker,
             impacted_areas: areas.to_vec(),
+            repo_layout: RepoLayout::company_ci_lab(),
         }
     }
 
@@ -971,38 +946,19 @@ mod tests {
         assert!(plan
             .steps
             .iter()
-            .any(|s| s.description.contains("next-web")));
+            .any(|step| step.description.contains("next-web")));
         assert!(plan
             .steps
             .iter()
-            .any(|s| s.description.contains("node-lib")));
+            .any(|step| step.description.contains("node-lib")));
         assert!(!plan
             .steps
             .iter()
-            .any(|s| s.description.contains("java-lib")));
+            .any(|step| step.description.contains("java-lib")));
         assert_eq!(
             plan.required_tools,
             vec!["node".to_string(), "npm".to_string()]
         );
-    }
-
-    #[test]
-    fn e2e_emulated_plan_orders_environment_before_deploy() {
-        let plan = e2e_emulated_plan(&context(&[Area::Testbeds]));
-        assert_eq!(plan.steps.first().unwrap().description, "start nexus");
-        assert_eq!(plan.steps.last().unwrap().description, "tear down nexus");
-        assert!(plan.steps.iter().any(|step| step
-            .command
-            .join(" ")
-            .contains("publish npm-lib libs/node-lib --tag ci")));
-        assert!(plan.steps.iter().any(|step| step
-            .command
-            .join(" ")
-            .contains("publish maven-lib libs/java-lib")));
-        assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
-        assert!(plan.required_tools.iter().any(|tool| tool == "./mvnw"));
-        assert!(plan.required_tools.iter().any(|tool| tool == "docker"));
-        assert!(!plan.required_tools.iter().any(|tool| tool == "cargo"));
     }
 
     #[test]
@@ -1011,6 +967,7 @@ mod tests {
             company_ci_binary: "company-ci".to_string(),
             container_engine: ContainerEngine::Docker,
             impacted_areas: vec![Area::Docs],
+            repo_layout: RepoLayout::company_ci_lab(),
         });
         assert_eq!(
             plan.steps,
@@ -1022,7 +979,9 @@ mod tests {
     #[test]
     fn publish_maven_lib_plan_requires_java_tools_for_java_lib() {
         let project_dir = repo_root().join("libs/java-lib");
-        let plan = publish_maven_lib_plan(project_dir.to_str().unwrap()).unwrap();
+        let plan =
+            publish_maven_lib_plan(&RepoLayout::company_ci_lab(), project_dir.to_str().unwrap())
+                .unwrap();
         assert!(plan
             .steps
             .iter()
@@ -1040,7 +999,12 @@ mod tests {
     #[test]
     fn publish_npm_lib_plan_requires_node_tools_for_node_lib() {
         let project_dir = repo_root().join("libs/node-lib");
-        let plan = publish_npm_lib_plan(project_dir.to_str().unwrap(), "ci").unwrap();
+        let plan = publish_npm_lib_plan(
+            &RepoLayout::company_ci_lab(),
+            project_dir.to_str().unwrap(),
+            "ci",
+        )
+        .unwrap();
         assert_eq!(
             plan.required_tools,
             vec!["node".to_string(), "npm".to_string()]
@@ -1058,7 +1022,9 @@ mod tests {
     #[test]
     fn publish_maven_lib_plan_rejects_non_maven_project_directory() {
         let project_dir = repo_root().join("libs/node-lib");
-        let error = publish_maven_lib_plan(project_dir.to_str().unwrap()).unwrap_err();
+        let error =
+            publish_maven_lib_plan(&RepoLayout::company_ci_lab(), project_dir.to_str().unwrap())
+                .unwrap_err();
         assert_eq!(
             error.to_string(),
             format!(
@@ -1069,18 +1035,8 @@ mod tests {
     }
 
     #[test]
-    fn deploy_kubernetes_plan_checks_live_services() {
-        let plan = deploy_kubernetes_plan(&context(&[Area::Deploy]));
-        assert!(plan
-            .steps
-            .iter()
-            .any(|step| step.description.contains("check next-web homepage")));
-        assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
-    }
-
-    #[test]
     fn deploy_openshift_plan_creates_pull_secret_and_checks_routes() {
-        let plan = deploy_openshift_plan(&context(&[Area::Deploy]));
+        let plan = deploy_openshift_plan(&context(&[Area::Deploy])).unwrap();
         assert!(plan
             .steps
             .iter()
@@ -1092,15 +1048,24 @@ mod tests {
         assert!(plan.steps.iter().any(|step| step
             .command
             .join(" ")
-            .contains("host.crc.testing:5002/company-ci/spring-api:dev")));
+            .contains("${COMPANY_CI_IMAGE_PULL_REGISTRY}")));
         assert!(plan.required_tools.iter().any(|tool| tool == "oc"));
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
+        assert!(plan.required_env.iter().any(|requirement| {
+            matches!(
+                requirement,
+                EnvRequirement::Variable { name, .. } if name == "COMPANY_CI_OPENSHIFT_API_URL"
+            )
+        }));
     }
 
     #[test]
-    fn e2e_openshift_local_plan_uses_nexus_and_publishes_images() {
-        let plan = e2e_openshift_local_plan(&context(&[Area::Testbeds]));
-        assert_eq!(plan.steps.first().unwrap().description, "start nexus");
+    fn e2e_openshift_plan_publishes_images_and_deploys() {
+        let plan = e2e_openshift_plan(&context(&[Area::Testbeds])).unwrap();
+        assert_eq!(
+            plan.steps.first().unwrap().description,
+            "verify all components"
+        );
         assert!(plan
             .steps
             .iter()
@@ -1111,8 +1076,39 @@ mod tests {
             .any(|step| step.command.join(" ").contains("deploy openshift")));
         assert!(plan.required_tools.iter().any(|tool| tool == "oc"));
         assert!(plan.required_tools.iter().any(|tool| tool == "curl"));
-        assert!(!plan.required_tools.iter().any(|tool| tool == "kind"));
-        assert!(!plan.required_tools.iter().any(|tool| tool == "kubectl"));
         assert!(!plan.required_tools.iter().any(|tool| tool == "cargo"));
+        assert!(plan
+            .dry_run_notes
+            .iter()
+            .any(|note| { note == "openshift image platform: linux/amd64" }));
+        assert!(plan.steps.iter().any(|step| {
+            step.command
+                .join(" ")
+                .contains("COMPANY_CI_IMAGE_PLATFORM=${COMPANY_CI_IMAGE_PLATFORM:-'linux/amd64'}")
+        }));
+    }
+
+    #[test]
+    fn image_build_command_adds_platform_when_requested() {
+        let command = image_build_command(
+            ContainerEngine::Docker,
+            "apps/spring-api/Containerfile",
+            "registry.example.test/company-ci/spring-api:dev",
+            "apps/spring-api",
+            Some("linux/amd64"),
+        );
+        assert!(command.contains("docker build --platform 'linux/amd64'"));
+    }
+
+    #[test]
+    fn image_build_command_skips_platform_when_not_requested() {
+        let command = image_build_command(
+            ContainerEngine::Docker,
+            "apps/spring-api/Containerfile",
+            "registry.example.test/company-ci/spring-api:dev",
+            "apps/spring-api",
+            None,
+        );
+        assert!(!command.contains("--platform"));
     }
 }

@@ -14,7 +14,6 @@ pub enum Command {
     Publish(PublishCommand),
     Image(ImageCommand),
     Deploy(DeployCommand),
-    Env(EnvCommand),
     E2e(E2eCommand),
 }
 
@@ -50,26 +49,12 @@ pub enum ImageCommand {
 
 #[derive(Debug, Clone)]
 pub enum DeployCommand {
-    Kubernetes(ExecutionArgs),
     Openshift(ExecutionArgs),
 }
 
 #[derive(Debug, Clone)]
-pub enum EnvCommand {
-    Up(EnvironmentTarget, ExecutionArgs),
-    Down(EnvironmentTarget, ExecutionArgs),
-}
-
-#[derive(Debug, Clone)]
-pub enum EnvironmentTarget {
-    Kind,
-    Nexus,
-}
-
-#[derive(Debug, Clone)]
 pub enum E2eCommand {
-    Emulated(ExecutionArgs),
-    OpenshiftLocal(ExecutionArgs),
+    Openshift(ExecutionArgs),
 }
 
 impl Cli {
@@ -96,7 +81,6 @@ fn parse_command(args: &[String]) -> Result<Command, CompanyCiError> {
         "publish" => parse_publish_command(&args[1..]),
         "image" => parse_image_command(&args[1..]),
         "deploy" => parse_deploy_command(&args[1..]),
-        "env" => parse_env_command(&args[1..]),
         "e2e" => parse_e2e_command(&args[1..]),
         "help" | "--help" | "-h" => Err(CompanyCiError::Usage(usage())),
         other => Err(CompanyCiError::InvalidArgument(format!(
@@ -152,34 +136,9 @@ fn parse_deploy_command(args: &[String]) -> Result<Command, CompanyCiError> {
     };
     let parsed = parse_execution_args(&args[1..])?;
     match subcommand {
-        "kubernetes" => Ok(Command::Deploy(DeployCommand::Kubernetes(parsed))),
         "openshift" => Ok(Command::Deploy(DeployCommand::Openshift(parsed))),
         other => Err(CompanyCiError::InvalidArgument(format!(
             "unknown deploy command: {other}"
-        ))),
-    }
-}
-
-fn parse_env_command(args: &[String]) -> Result<Command, CompanyCiError> {
-    if args.len() < 2 {
-        return Err(CompanyCiError::Usage(usage()));
-    }
-    let action = args[0].as_str();
-    let target = match args[1].as_str() {
-        "kind" => EnvironmentTarget::Kind,
-        "nexus" => EnvironmentTarget::Nexus,
-        other => {
-            return Err(CompanyCiError::InvalidArgument(format!(
-                "unknown env target: {other}"
-            )))
-        }
-    };
-    let parsed = parse_execution_args(&args[2..])?;
-    match action {
-        "up" => Ok(Command::Env(EnvCommand::Up(target, parsed))),
-        "down" => Ok(Command::Env(EnvCommand::Down(target, parsed))),
-        other => Err(CompanyCiError::InvalidArgument(format!(
-            "unknown env action: {other}"
         ))),
     }
 }
@@ -190,8 +149,7 @@ fn parse_e2e_command(args: &[String]) -> Result<Command, CompanyCiError> {
     };
     let parsed = parse_execution_args(&args[1..])?;
     match subcommand {
-        "emulated" => Ok(Command::E2e(E2eCommand::Emulated(parsed))),
-        "openshift-local" => Ok(Command::E2e(E2eCommand::OpenshiftLocal(parsed))),
+        "openshift" => Ok(Command::E2e(E2eCommand::Openshift(parsed))),
         other => Err(CompanyCiError::InvalidArgument(format!(
             "unknown e2e command: {other}"
         ))),
@@ -285,14 +243,8 @@ fn usage() -> String {
         "  company-ci publish npm-lib <path> [--dry-run] [--tag <dist-tag>]",
         "  company-ci image build [--dry-run]",
         "  company-ci image publish [--dry-run]",
-        "  company-ci deploy kubernetes [--dry-run]",
         "  company-ci deploy openshift [--dry-run]",
-        "  company-ci env up kind [--dry-run]",
-        "  company-ci env down kind [--dry-run]",
-        "  company-ci env up nexus [--dry-run]",
-        "  company-ci env down nexus [--dry-run]",
-        "  company-ci e2e emulated [--dry-run]",
-        "  company-ci e2e openshift-local [--dry-run]",
+        "  company-ci e2e openshift [--dry-run]",
         "Commands:",
         "  verify",
         "  build",
@@ -301,9 +253,8 @@ fn usage() -> String {
         "  publish maven-lib <path>",
         "  publish npm-lib <path> [--tag <dist-tag>]",
         "  image build|publish",
-        "  deploy kubernetes|openshift",
-        "  env up|down kind|nexus",
-        "  e2e emulated|openshift-local",
+        "  deploy openshift",
+        "  e2e openshift",
     ]
     .join("\n")
 }
@@ -386,6 +337,24 @@ mod tests {
     fn publish_requires_path() {
         let error = Cli::parse(["publish".into(), "maven-lib".into()]).unwrap_err();
         assert!(matches!(error, CompanyCiError::Usage(_)));
+    }
+
+    #[test]
+    fn rejects_kubernetes_deploy_command() {
+        let error = Cli::parse(["deploy".into(), "kubernetes".into()]).unwrap_err();
+        assert_eq!(error.to_string(), "unknown deploy command: kubernetes");
+    }
+
+    #[test]
+    fn rejects_legacy_env_command() {
+        let error = Cli::parse(["env".into(), "up".into(), "repository".into()]).unwrap_err();
+        assert_eq!(error.to_string(), "unknown command: env");
+    }
+
+    #[test]
+    fn rejects_legacy_openshift_local_e2e_command() {
+        let error = Cli::parse(["e2e".into(), "openshift-local".into()]).unwrap_err();
+        assert_eq!(error.to_string(), "unknown e2e command: openshift-local");
     }
 
     #[test]

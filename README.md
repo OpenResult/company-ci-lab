@@ -11,7 +11,7 @@ The point of the repo is not "how to write more YAML". It is the opposite: GitHu
 - Treat `company-ci` as the CI command palette and workflow-facing API.
 - Keep orchestration in Rust where it is type-safe, testable, and refactorable.
 - Provide sample applications and libraries that exercise build, test, package, publish, image, and deploy flows.
-- Make local emulation the default path for end-to-end experimentation.
+- Make local experimentation straightforward through the same CLI contract.
 
 ## Repository layout
 
@@ -21,7 +21,7 @@ The point of the repo is not "how to write more YAML". It is the opposite: GitHu
 - `libs/node-lib`: TypeScript library scaffold with generated ESM and declaration output.
 - `libs/java-lib`: minimal Java library.
 - `deploy/`: Kustomize-style deployment manifests.
-- `testbeds/`: local and emulated environment assets.
+- `testbeds/`: local environment assets.
 - `.github/actions/setup-company-ci`: local action that installs the `company-ci` binary onto `PATH`.
 - `.github/workflows/`: thin workflows that install and call `company-ci`.
 
@@ -41,7 +41,7 @@ The always-on verification workflow installs `company-ci` onto `PATH` and delega
 company-ci verify
 ```
 
-Each top-level `company-ci` command also performs a required-tools preflight before it executes real work. GitHub Actions is still responsible for installing language runtimes and platform CLIs, but the Rust CLI verifies that the expected tools are actually on `PATH`.
+Each top-level `company-ci` command also performs a required-tools and required-env preflight before it executes real work. GitHub Actions is still responsible for installing language runtimes, platform CLIs, and injecting credentials, but the Rust CLI verifies that the expected tools and contract inputs are actually present before side effects begin.
 
 That split is deliberate:
 
@@ -64,23 +64,28 @@ company-ci publish maven-lib <path> [--dry-run]
 company-ci publish npm-lib <path> [--dry-run] [--tag <dist-tag>]
 company-ci image build [--dry-run]
 company-ci image publish [--dry-run]
-company-ci deploy kubernetes [--dry-run]
 company-ci deploy openshift [--dry-run]
-company-ci env up|down kind|nexus [--dry-run]
-company-ci e2e emulated|openshift-local [--dry-run]
+company-ci e2e openshift [--dry-run]
 ```
 
-Containerized local workflows default to Docker and kind. Set `COMPANY_CI_CONTAINER_ENGINE=podman` if you want the same commands to target Podman instead.
+Containerized image workflows default to Docker. Set `COMPANY_CI_CONTAINER_ENGINE=podman` if you want the same commands to target Podman instead.
 
-Container image flows now resolve from a generic env contract so the same CLI can target local Nexus or a future external Artifactory-backed workflow:
+Container image flows now resolve from a generic env contract so the same CLI can target a local repository or a future external Artifactory-backed workflow:
 
 - `COMPANY_CI_IMAGE_PUSH_REGISTRY`
 - `COMPANY_CI_IMAGE_PULL_REGISTRY`
 - `COMPANY_CI_IMAGE_NAMESPACE`
 - `COMPANY_CI_IMAGE_TAG`
+- `COMPANY_CI_IMAGE_PLATFORM`
 - `COMPANY_CI_IMAGE_REGISTRY_USERNAME`
 - `COMPANY_CI_IMAGE_REGISTRY_PASSWORD`
 - `COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE`
+
+OpenShift deploy flows also use an auth contract:
+
+- `COMPANY_CI_OPENSHIFT_API_URL`
+- `COMPANY_CI_OPENSHIFT_TOKEN`
+- `COMPANY_CI_OPENSHIFT_SKIP_TLS_VERIFY`
 
 ## Local setup
 
@@ -95,9 +100,9 @@ Install the required toolchain on the host before running non-dry-run `company-c
 - Rust toolchain with `cargo`
 - Node.js 24 with `npm`
 - Java 21, with the repo-local Maven wrapper via `./mvnw`
-- Docker plus `kind` and `kubectl` for the default emulated path
+- Docker or Podman for image and repository flows
 - `act` only for local workflow smoke tests
-- `oc` only for the OpenShift Local path
+- `oc` plus the OpenShift auth env contract for the OpenShift path
 
 See `docs/local-dev.md` for concrete install steps on macOS and WSL.
 
@@ -105,12 +110,11 @@ See `docs/architecture.md`, `docs/workflows.md`, `docs/local-dev.md`, and `docs/
 
 ## Current reality
 
-The most concrete paths in the scaffold today are the verification lanes and the local emulated path:
+The most concrete paths in the scaffold today are the verification lanes, repository-backed publish flows, and the OpenShift deployment path:
 
 - `apps/next-web` lint/tests/build produce a static artifact in `dist/`.
-- `company-ci publish npm-lib libs/node-lib --tag ci` and `company-ci publish maven-lib libs/java-lib` drive the local library publish paths through the Nexus helper flow.
+- `company-ci publish npm-lib libs/node-lib --tag ci` and `company-ci publish maven-lib libs/java-lib` drive the local library publish paths through the repository helper flow.
 - `apps/spring-api` runs real Maven verify/package flows with Spring Boot tests through the repo-local wrapper.
-- `company-ci e2e emulated` now brings up Nexus and kind helpers, pushes app images to a local registry, deploys to kind, and verifies live service responses.
-- `company-ci deploy openshift` and `company-ci e2e openshift-local` now model the higher-fidelity local path of Nexus as the image repository plus OpenShift Local for deployment and route-based health checks.
+- `company-ci deploy openshift` and `company-ci e2e openshift` model the OpenShift deployment path, with a repository and cluster expected to exist outside `company-ci`.
 
 That is the core claim of the repo: maintainable CI should be real code with types, tests, and local execution, while GitHub Actions stays a thin transport for invoking that code.

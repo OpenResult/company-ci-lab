@@ -7,4 +7,4 @@ spec:
     kind: Service
     name: spring-api
   port:
-    targetPort: 80
+    targetPort: http

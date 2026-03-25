@@ -7,4 +7,4 @@ spec:
     kind: Service
     name: next-web
   port:
-    targetPort: 80
+    targetPort: http

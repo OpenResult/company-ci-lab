@@ -5,7 +5,10 @@ mod context;
 mod error;
 mod image_config;
 mod impact;
+mod openshift_config;
 mod plan;
+mod repo_layout;
+mod requirements;
 mod runner;
 
 use cli::Cli;

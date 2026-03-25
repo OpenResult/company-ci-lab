@@ -12,12 +12,12 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn nexus_repository_verifier_accepts_container_maven_and_npm_repositories() {
+fn repository_verifier_accepts_container_maven_and_npm_repositories() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let test_dir = std::env::temp_dir().join(format!("company-ci-nexus-{stamp}"));
+    let test_dir = std::env::temp_dir().join(format!("company-ci-repository-{stamp}"));
     fs::create_dir_all(&test_dir).expect("temp dir should exist");
 
     let repositories_file = test_dir.join("repositories.json");
@@ -35,7 +35,7 @@ fn nexus_repository_verifier_accepts_container_maven_and_npm_repositories() {
 
     let output = Command::new("sh")
         .current_dir(repo_root())
-        .arg("testbeds/repo/nexus/verify-repositories.sh")
+        .arg("testbeds/repository/verify-repositories.sh")
         .arg(repositories_file.to_str().unwrap())
         .args(["container-hosted", "maven-snapshots", "npm-hosted"])
         .output()
@@ -45,5 +45,5 @@ fn nexus_repository_verifier_accepts_container_maven_and_npm_repositories() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("verified Nexus repositories"));
+    assert!(stdout.contains("verified repositories"));
 }

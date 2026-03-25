@@ -1,3 +1,5 @@
+use crate::repo_layout::RepoLayout;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Area {
     NextWeb,
@@ -11,10 +13,10 @@ pub enum Area {
     Workflows,
 }
 
-pub fn infer_areas<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<Area> {
+pub fn infer_areas<'a>(layout: &RepoLayout, paths: impl IntoIterator<Item = &'a str>) -> Vec<Area> {
     let mut areas = Vec::new();
     for path in paths {
-        for area in classify_path(path) {
+        for area in classify_path(layout, path) {
             if !areas.contains(&area) {
                 areas.push(area);
             }
@@ -26,39 +28,46 @@ pub fn infer_areas<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<Area> {
     areas
 }
 
-fn classify_path(path: &str) -> Vec<Area> {
+fn classify_path(layout: &RepoLayout, path: &str) -> Vec<Area> {
     let mut areas = Vec::new();
-    if path.starts_with("apps/next-web/") {
+    if path.starts_with(&component_prefix(layout.next_web.project_dir)) {
         areas.push(Area::NextWeb);
     }
-    if path.starts_with("apps/spring-api/") {
+    if path.starts_with(&component_prefix(layout.spring_api.project_dir)) {
         areas.push(Area::SpringApi);
     }
-    if path.starts_with("libs/node-lib/") {
+    if path.starts_with(&component_prefix(layout.node_lib.project_dir)) {
         areas.push(Area::NodeLib);
     }
-    if path.starts_with("libs/java-lib/") {
+    if path.starts_with(&component_prefix(layout.java_lib.project_dir)) {
         areas.push(Area::JavaLib);
     }
-    if path.starts_with("deploy/") {
+    if path.starts_with(layout.deploy_root) {
         areas.push(Area::Deploy);
     }
-    if path.starts_with("tools/company-ci/") || path == "Cargo.toml" || path == "Cargo.lock" {
+    if path.starts_with(layout.tooling_root)
+        || path == layout.cargo_toml_path
+        || path == layout.cargo_lock_path
+    {
         areas.push(Area::Tooling);
     }
-    if path.starts_with("docs/") || path == "README.md" {
+    if path.starts_with(layout.docs_root) || path == layout.readme_path {
         areas.push(Area::Docs);
     }
-    if path.starts_with("testbeds/") || path.starts_with("scripts/") {
+    if path.starts_with(layout.testbeds_root) || path.starts_with(layout.scripts_root) {
         areas.push(Area::Testbeds);
     }
-    if path.starts_with(".github/workflows/")
-        || path.starts_with(".github/ISSUE_TEMPLATE/")
-        || path == ".github/pull_request_template.md"
+    if path.starts_with(layout.workflows_root)
+        || path.starts_with(layout.issue_template_root)
+        || path == layout.pull_request_template
     {
         areas.push(Area::Workflows);
     }
     areas
+}
+
+fn component_prefix(root_dir: &str) -> String {
+    format!("{root_dir}/")
 }
 
 #[cfg(test)]
@@ -67,14 +76,19 @@ mod tests {
 
     #[test]
     fn maps_component_paths_to_areas() {
-        let areas = infer_areas(["apps/next-web/src/app/page.tsx", "libs/java-lib/pom.xml"]);
+        let layout = RepoLayout::company_ci_lab();
+        let areas = infer_areas(
+            &layout,
+            ["apps/next-web/src/app/page.tsx", "libs/java-lib/pom.xml"],
+        );
         assert!(areas.contains(&Area::NextWeb));
         assert!(areas.contains(&Area::JavaLib));
     }
 
     #[test]
     fn defaults_to_tooling_when_no_paths_are_available() {
-        let areas = infer_areas(Vec::<&str>::new());
+        let layout = RepoLayout::company_ci_lab();
+        let areas = infer_areas(&layout, Vec::<&str>::new());
         assert_eq!(areas, vec![Area::Tooling]);
     }
 }

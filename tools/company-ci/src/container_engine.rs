@@ -34,13 +34,6 @@ impl ContainerEngine {
             Self::Podman => "podman",
         }
     }
-
-    pub fn kind_provider_env(self) -> Option<&'static str> {
-        match self {
-            Self::Docker => None,
-            Self::Podman => Some("KIND_EXPERIMENTAL_PROVIDER=podman"),
-        }
-    }
 }
 
 #[cfg(test)]

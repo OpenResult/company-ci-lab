@@ -112,44 +112,33 @@ fn deploy_openshift_dry_run_includes_pull_secret_and_route_checks() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("[dry-run] verify required tool: oc"));
     assert!(stdout.contains("[dry-run] verify required tool: curl"));
+    assert!(stdout.contains("[dry-run] verify required env: COMPANY_CI_OPENSHIFT_API_URL"));
+    assert!(stdout.contains("[dry-run] verify required secret env: COMPANY_CI_OPENSHIFT_TOKEN"));
     assert!(stdout.contains("[dry-run] apply registry pull secret"));
-    assert!(stdout.contains("host.crc.testing:5002/company-ci/next-web:dev"));
-    assert!(
-        stdout.contains("testbeds/openshift-local/check-route.sh next-web / company-ci next-web")
-    );
+    assert!(stdout.contains("${COMPANY_CI_IMAGE_PULL_REGISTRY}"));
+    assert!(stdout.contains("testbeds/openshift/check-route.sh next-web / company-ci next-web"));
 }
 
 #[test]
-fn e2e_openshift_local_dry_run_uses_resolved_registry_contract() {
+fn e2e_openshift_dry_run_uses_resolved_registry_contract() {
     let output = Command::new(env!("CARGO_BIN_EXE_company-ci"))
         .env("COMPANY_CI_IMAGE_TAG", "qa")
-        .args(["e2e", "openshift-local", "--dry-run"])
+        .args(["e2e", "openshift", "--dry-run"])
         .output()
         .expect("binary should run");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[dry-run] openshift-local image tag: qa"));
+    assert!(stdout.contains("[dry-run] openshift image tag: qa"));
+    assert!(stdout.contains("[dry-run] openshift image platform: linux/amd64"));
     assert!(stdout.contains(
         "COMPANY_CI_IMAGE_PUSH_REGISTRY=${COMPANY_CI_IMAGE_PUSH_REGISTRY:-'localhost:5002'}"
     ));
+    assert!(
+        stdout.contains("COMPANY_CI_IMAGE_PLATFORM=${COMPANY_CI_IMAGE_PLATFORM:-'linux/amd64'}")
+    );
     assert!(stdout.contains(" image publish"));
     assert!(stdout.contains(" deploy openshift"));
-    assert!(!stdout.contains("cargo run -p company-ci"));
-    assert!(!stdout.contains("[dry-run] verify required tool: cargo"));
-}
-
-#[test]
-fn e2e_emulated_dry_run_invokes_company_ci_without_cargo() {
-    let output = Command::new(env!("CARGO_BIN_EXE_company-ci"))
-        .args(["e2e", "emulated", "--dry-run"])
-        .output()
-        .expect("binary should run");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(" publish npm-lib libs/node-lib --tag ci"));
-    assert!(stdout.contains(" deploy kubernetes"));
     assert!(!stdout.contains("cargo run -p company-ci"));
     assert!(!stdout.contains("[dry-run] verify required tool: cargo"));
 }

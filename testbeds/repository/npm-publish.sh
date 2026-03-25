@@ -2,25 +2,25 @@
 set -euo pipefail
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "Usage: testbeds/repo/nexus/npm-publish.sh <package-dir> [dist-tag]" >&2
+  echo "Usage: testbeds/repository/npm-publish.sh <package-dir> [dist-tag]" >&2
   exit 1
 fi
 
 package_dir="$1"
-registry_url="${NPM_REGISTRY_URL:-${COMPANY_CI_NEXUS_URL:-http://localhost:8081}/repository/npm-hosted/}"
+registry_url="${NPM_REGISTRY_URL:-${COMPANY_CI_REPOSITORY_URL:-${COMPANY_CI_NEXUS_URL:-http://localhost:8081}}/repository/npm-hosted/}"
 registry_url="${registry_url%/}/"
-username="${COMPANY_CI_NEXUS_USERNAME:-admin}"
+username="${COMPANY_CI_REPOSITORY_USERNAME:-${COMPANY_CI_NEXUS_USERNAME:-admin}}"
 email="${COMPANY_CI_NPM_EMAIL:-company-ci@example.test}"
 npm_dist_tag="${2:-${COMPANY_CI_NPM_DIST_TAG:-ci}}"
-password_file="${COMPANY_CI_NEXUS_PASSWORD_FILE:-testbeds/repo/nexus/.runtime/admin.password}"
+password_file="${COMPANY_CI_REPOSITORY_PASSWORD_FILE:-${COMPANY_CI_NEXUS_PASSWORD_FILE:-testbeds/repository/.runtime/admin.password}}"
 
-password="${COMPANY_CI_NEXUS_PASSWORD:-}"
+password="${COMPANY_CI_REPOSITORY_PASSWORD:-${COMPANY_CI_NEXUS_PASSWORD:-}}"
 if [ -z "${password}" ] && [ -f "${password_file}" ]; then
   password="$(tr -d '\r\n' < "${password_file}")"
 fi
 
 if [ -z "${password}" ]; then
-  echo "missing Nexus password; run company-ci env up nexus or set COMPANY_CI_NEXUS_PASSWORD" >&2
+  echo "missing repository password; initialize the repository or set COMPANY_CI_REPOSITORY_PASSWORD" >&2
   exit 1
 fi
 

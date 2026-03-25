@@ -1,5 +1,5 @@
 services:
-  nexus:
+  repository:
     image: sonatype/nexus3:3.70.1
     ports:
       - "8081:8081"

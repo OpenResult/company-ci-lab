@@ -10,19 +10,18 @@
 
 ## Layer B: local workflow smoke
 
-- `act` against `verify.yml` and `emulated-e2e.yml`.
+- `act` against `verify.yml`.
 - Thin workflows mean the local and hosted paths exercise the same Rust entry points and the same `company-ci` command palette.
 
-## Layer C: emulated platform
+## Layer C: local repository
 
-- kind plus a local registry, using Docker by default and Podman when `COMPANY_CI_CONTAINER_ENGINE=podman`.
-- Nexus via Docker Compose, with readiness checks and repo validation for the npm, Maven, and Docker hosted repositories the CLI expects.
-- `company-ci e2e emulated` owns startup, orchestration, explicit local package publication, image push, deploy, live service checks, and teardown sequencing.
+- Docker Compose can stand up the local repository service used for npm, Maven, and Docker hosted repositories.
+- The repository bootstrap helper validates readiness and captures runtime credentials for later publish and image flows.
 
-## Layer D: higher-fidelity OpenShift local
+## Layer D: OpenShift integration
 
-- Assumes an existing OpenShift Local environment.
-- Uses the same CLI registry contract with a local Nexus-backed image repo, applies OpenShift overlays with Routes and pull-secret wiring, and verifies live HTTP responses through `oc` plus route checks.
+- Assumes an existing OpenShift environment plus the OpenShift auth env contract.
+- Uses the same CLI registry contract with a local repository-backed image repo, can pin image builds to a target platform such as `linux/amd64`, applies OpenShift overlays with Routes and pull-secret wiring, and verifies live HTTP responses through `oc` plus route checks.
 
 ## Layer E: GitHub.com integration
 

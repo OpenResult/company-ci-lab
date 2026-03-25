@@ -14,9 +14,8 @@ Run the repo from the macOS terminal or from the Linux shell inside WSL. Do not 
 
 - `cargo test` and all `company-ci` commands require a Rust toolchain with `cargo`.
 - Component verification, packaging, and publishing require Node.js 24 with `npm`, plus Java 21. Maven comes from the repo-local `./mvnw` wrapper.
-- `company-ci env up nexus` requires `docker` by default or `podman` when `COMPANY_CI_CONTAINER_ENGINE=podman`, plus `curl`.
-- `company-ci env up kind`, `company-ci deploy kubernetes`, and `company-ci e2e emulated` require the selected container engine, `kind`, and `kubectl`.
-- `company-ci deploy openshift` and `company-ci e2e openshift-local` require `oc` plus an existing OpenShift Local login.
+- Repository bootstrap uses `docker compose` by default or an equivalent Podman flow when `COMPANY_CI_CONTAINER_ENGINE=podman`.
+- `company-ci deploy openshift` and `company-ci e2e openshift` require `oc`, plus the OpenShift auth env contract.
 - `act` is only needed for local workflow smoke tests.
 
 ## Install required tools on macOS
@@ -26,7 +25,7 @@ Homebrew plus Docker Desktop is the shortest path:
 ```bash
 xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install rustup node@24 openjdk@21 kind kubectl
+brew install rustup node@24 openjdk@21
 brew install --cask docker
 rustup default stable
 ```
@@ -47,8 +46,6 @@ npm --version
 java -version
 ./mvnw --version
 docker version
-kind version
-kubectl version --client
 ```
 
 Install `act` only if you want local workflow smoke tests:
@@ -77,20 +74,7 @@ nvm alias default 24
 . "$HOME/.cargo/env"
 ```
 
-Install the cluster helpers inside WSL:
-
-```bash
-KIND_VERSION=v0.31.0
-curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
-chmod +x ./kind
-sudo mv ./kind /usr/local/bin/kind
-
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-sudo mv kubectl /usr/local/bin/kubectl
-```
-
-For the default container engine, install Docker Desktop on Windows, enable the WSL 2 backend, and turn on WSL integration for the distro that holds this repo. `docker version` should succeed inside WSL before you run `company-ci env up kind` or `company-ci e2e emulated`.
+For the default container engine, install Docker Desktop on Windows, enable the WSL 2 backend, and turn on WSL integration for the distro that holds this repo. `docker version` should succeed inside WSL before you run repository bootstrap or any image flow.
 
 Verify the WSL toolchain:
 
@@ -104,11 +88,9 @@ npm --version
 java -version
 ./mvnw --version
 docker version
-kind version
-kubectl version --client
 ```
 
-Install `act` and `oc` only if you need the optional workflow-smoke or OpenShift-local paths.
+Install `act` and `oc` only if you need the optional workflow-smoke or OpenShift paths.
 
 ## Fast verification
 
@@ -117,22 +99,19 @@ Install `act` and `oc` only if you need the optional workflow-smoke or OpenShift
 ./scripts/dev-verify.sh
 ```
 
-The default local model is Docker Desktop plus kind. `company-ci` assumes `docker` unless `COMPANY_CI_CONTAINER_ENGINE=podman` is set. The higher-fidelity local OpenShift profile uses the same CLI but resolves images through a Nexus Docker hosted repository on `localhost:5002`, with OpenShift Local pulling those images through `host.crc.testing:5002`.
+The default local model is Docker Desktop for repository and image flows. `company-ci` assumes `docker` unless `COMPANY_CI_CONTAINER_ENGINE=podman` is set. The local OpenShift-oriented profile resolves images through a repository Docker hosted endpoint on `localhost:5002`, with a local OpenShift environment such as CRC pulling those images through `host.crc.testing:5002`.
 
 ## Run the Rust CLI directly
 
 ```bash
 cargo run -p company-ci -- verify --dry-run
-cargo run -p company-ci -- e2e emulated --dry-run
-cargo run -p company-ci -- env up nexus
 cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci --dry-run
 cargo run -p company-ci -- publish maven-lib libs/java-lib --dry-run
-cargo run -p company-ci -- env up kind
 cargo run -p company-ci -- deploy openshift --dry-run
-cargo run -p company-ci -- e2e openshift-local --dry-run
+cargo run -p company-ci -- e2e openshift --dry-run
 ```
 
-Dry-run output includes the required tool preflight for the selected command. Real runs verify those tools on `PATH` before starting work.
+Dry-run output includes the required tool and env-contract preflight for the selected command. Real runs verify those inputs before starting work.
 
 The first `./mvnw` execution downloads the pinned Maven distribution declared in `.mvn/wrapper/maven-wrapper.properties`.
 
@@ -153,12 +132,19 @@ Assets under `testbeds/workflows/act` provide a place for local `act` configurat
 
 ```bash
 act pull_request -W .github/workflows/verify.yml
-act workflow_dispatch -W .github/workflows/emulated-e2e.yml
 ```
 
-## OpenShift Local profile
+## OpenShift profile
 
-`company-ci e2e openshift-local` assumes OpenShift Local and `oc` are already installed and logged in. The command starts Nexus locally, builds and publishes app images into the Nexus Docker hosted repo, deploys the OpenShift overlay, and verifies the exposed Routes.
+`company-ci e2e openshift` assumes an OpenShift environment and `oc` are already installed, and that the repository has already been started outside `company-ci`. The command builds and publishes app images into the repository Docker hosted repo, logs in to OpenShift through the env contract, deploys the OpenShift overlay, and verifies the exposed Routes.
+
+The reusable OpenShift auth contract is:
+
+```bash
+COMPANY_CI_OPENSHIFT_API_URL
+COMPANY_CI_OPENSHIFT_TOKEN
+COMPANY_CI_OPENSHIFT_SKIP_TLS_VERIFY
+```
 
 The reusable image contract for OpenShift-based deploys is:
 
@@ -167,6 +153,7 @@ COMPANY_CI_IMAGE_PUSH_REGISTRY
 COMPANY_CI_IMAGE_PULL_REGISTRY
 COMPANY_CI_IMAGE_NAMESPACE
 COMPANY_CI_IMAGE_TAG
+COMPANY_CI_IMAGE_PLATFORM
 COMPANY_CI_IMAGE_REGISTRY_USERNAME
 COMPANY_CI_IMAGE_REGISTRY_PASSWORD
 COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE
@@ -179,16 +166,21 @@ COMPANY_CI_IMAGE_PUSH_REGISTRY=localhost:5002
 COMPANY_CI_IMAGE_PULL_REGISTRY=host.crc.testing:5002
 COMPANY_CI_IMAGE_NAMESPACE=company-ci
 COMPANY_CI_IMAGE_TAG=dev
+COMPANY_CI_IMAGE_PLATFORM=linux/amd64
 COMPANY_CI_IMAGE_REGISTRY_USERNAME=admin
-COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE=testbeds/repo/nexus/.runtime/admin.password
+COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE=testbeds/repository/.runtime/admin.password
 ```
+
+`company-ci e2e openshift` now defaults image builds to `linux/amd64`, which matches the common remote OpenShift worker architecture. Override `COMPANY_CI_IMAGE_PLATFORM` if your target cluster expects a different image architecture.
 
 The direct local happy path is:
 
 ```bash
-cargo run -p company-ci -- env up nexus
-oc login ...
-cargo run -p company-ci -- e2e openshift-local
+docker compose -f testbeds/repository/compose.yaml up -d
+sh testbeds/repository/bootstrap.sh
+COMPANY_CI_OPENSHIFT_API_URL=https://api.example.openshift.test:6443 \
+COMPANY_CI_OPENSHIFT_TOKEN=... \
+cargo run -p company-ci -- e2e openshift
 ```
 
 
@@ -202,17 +194,17 @@ COMPANY_CI_CHANGED_FILES=docs/architecture.md cargo run -p company-ci -- build -
 
 ## Concrete slices
 
-The most concrete local paths today are the Node and Java verification slices, plus the emulated environment bootstrap:
+The most concrete local paths today are the Node and Java verification slices plus repository-backed publish flows:
 
 ```bash
 cd apps/next-web && npm run lint && npm test && npm run build
 cd libs/node-lib && npm run lint && npm run typecheck && npm run build && npm test && npm run package
 ./mvnw -B -ntp -f apps/spring-api/pom.xml verify
 ./mvnw -B -ntp -f libs/java-lib/pom.xml verify
-cargo run -p company-ci -- env up nexus
-cargo run -p company-ci -- env up kind
+docker compose -f testbeds/repository/compose.yaml up -d
+sh testbeds/repository/bootstrap.sh
 cargo run -p company-ci -- publish npm-lib libs/node-lib --tag ci
 cargo run -p company-ci -- publish maven-lib libs/java-lib
 ```
 
-`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses the repo-local Maven wrapper through `company-ci`, and the local Nexus path now captures runtime credentials in `testbeds/repo/nexus/.runtime/` so later package, image-publish, and OpenShift deploy steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.
+`libs/node-lib` uses repo-local Node scripts for type and build validation, the Java lane uses the repo-local Maven wrapper through `company-ci`, and the local repository bootstrap captures runtime credentials in `testbeds/repository/.runtime/` so later package, image-publish, and OpenShift deploy steps can reuse them without extra workflow logic. If you need Podman locally, export `COMPANY_CI_CONTAINER_ENGINE=podman` before running the same commands.

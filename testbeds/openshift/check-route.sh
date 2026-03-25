@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: testbeds/openshift-local/check-route.sh <route> <path> [expected-substring]" >&2
+  echo "Usage: testbeds/openshift/check-route.sh <route> <path> [expected-substring]" >&2
   exit 1
 fi
 

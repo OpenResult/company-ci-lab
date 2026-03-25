@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
-  echo "Usage: testbeds/repo/nexus/verify-repositories.sh <repositories-json> <repository> [repository...]" >&2
+  echo "Usage: testbeds/repository/verify-repositories.sh <repositories-json> <repository> [repository...]" >&2
   exit 1
 fi
 
@@ -16,9 +16,9 @@ fi
 
 for repository in "$@"; do
   if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${repository}\"" "${repositories_file}"; then
-    echo "required Nexus repository not found: ${repository}" >&2
+    echo "required repository not found: ${repository}" >&2
     exit 1
   fi
 done
 
-echo "verified Nexus repositories: $*"
+echo "verified repositories: $*"

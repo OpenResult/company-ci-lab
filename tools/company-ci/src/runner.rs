@@ -1,5 +1,6 @@
 use crate::error::CompanyCiError;
 use crate::plan::{Plan, Step};
+use crate::requirements::EnvRequirement;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -7,6 +8,11 @@ use std::process::Command;
 
 pub trait CommandRunner {
     fn check_tool(&self, plan: &Plan, tool: &str) -> Result<(), Box<dyn std::error::Error>>;
+    fn check_env(
+        &self,
+        plan: &Plan,
+        requirement: &EnvRequirement,
+    ) -> Result<(), Box<dyn std::error::Error>>;
     fn run(&self, step: &Step) -> Result<(), Box<dyn std::error::Error>>;
 
     fn run_plan(&self, plan: &Plan, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -21,6 +27,14 @@ pub trait CommandRunner {
                 println!("[dry-run] verify required tool: {tool}");
             } else {
                 self.check_tool(plan, tool)?;
+            }
+        }
+
+        for requirement in &plan.required_env {
+            if dry_run {
+                println!("[dry-run] {}", requirement.dry_run_message());
+            } else {
+                self.check_env(plan, requirement)?;
             }
         }
 
@@ -68,6 +82,25 @@ impl CommandRunner for ShellRunner {
             }))
         }
     }
+
+    fn check_env(
+        &self,
+        plan: &Plan,
+        requirement: &EnvRequirement,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match requirement {
+            EnvRequirement::Variable {
+                name,
+                secret: false,
+            } => require_env(plan, name),
+            EnvRequirement::Variable { name, secret: true } => require_secret_env(plan, name),
+            EnvRequirement::VariableOrFile {
+                variable_name,
+                file_name,
+                ..
+            } => require_env_or_file(plan, variable_name, file_name),
+        }
+    }
 }
 
 fn tool_on_path(tool: &str) -> bool {
@@ -103,12 +136,71 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
+fn require_env(plan: &Plan, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if env_var_is_nonempty(name) {
+        Ok(())
+    } else {
+        Err(Box::new(CompanyCiError::MissingEnv {
+            plan: plan.name.clone(),
+            name: name.to_string(),
+        }))
+    }
+}
+
+fn require_secret_env(plan: &Plan, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if env_var_is_nonempty(name) {
+        Ok(())
+    } else {
+        Err(Box::new(CompanyCiError::MissingSecretEnv {
+            plan: plan.name.clone(),
+            name: name.to_string(),
+        }))
+    }
+}
+
+fn require_env_or_file(
+    plan: &Plan,
+    variable_name: &str,
+    file_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if env_var_is_nonempty(variable_name) {
+        return Ok(());
+    }
+
+    let file_path = env::var(file_name).unwrap_or_default();
+    if file_path.trim().is_empty() {
+        return Err(Box::new(CompanyCiError::MissingEnvOrFile {
+            plan: plan.name.clone(),
+            env_name: variable_name.to_string(),
+            file_env_name: file_name.to_string(),
+        }));
+    }
+
+    if Path::new(&file_path).is_file() {
+        Ok(())
+    } else {
+        Err(Box::new(CompanyCiError::MissingEnvFile {
+            plan: plan.name.clone(),
+            name: file_name.to_string(),
+            path: file_path,
+        }))
+    }
+}
+
+fn env_var_is_nonempty(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::RefCell;
     struct RecordingRunner {
         checked_tools: RefCell<Vec<String>>,
+        checked_env: RefCell<Vec<String>>,
         commands: RefCell<Vec<String>>,
     }
 
@@ -116,6 +208,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 checked_tools: RefCell::new(Vec::new()),
+                checked_env: RefCell::new(Vec::new()),
                 commands: RefCell::new(Vec::new()),
             }
         }
@@ -124,6 +217,17 @@ mod tests {
     impl CommandRunner for RecordingRunner {
         fn check_tool(&self, _plan: &Plan, tool: &str) -> Result<(), Box<dyn std::error::Error>> {
             self.checked_tools.borrow_mut().push(tool.to_string());
+            Ok(())
+        }
+
+        fn check_env(
+            &self,
+            _plan: &Plan,
+            requirement: &EnvRequirement,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            self.checked_env
+                .borrow_mut()
+                .push(requirement.display_name());
             Ok(())
         }
 
@@ -149,9 +253,11 @@ mod tests {
                 },
             ],
         )
-        .with_required_tools(["node", "npm"]);
+        .with_required_tools(["node", "npm"])
+        .with_required_env([EnvRequirement::variable("SAMPLE_ENV")]);
         runner.run_plan(&plan, false).unwrap();
         assert_eq!(runner.checked_tools.borrow().as_slice(), ["node", "npm"]);
+        assert_eq!(runner.checked_env.borrow().as_slice(), ["SAMPLE_ENV"]);
         assert_eq!(runner.commands.borrow().len(), 2);
     }
 
@@ -165,9 +271,11 @@ mod tests {
                 command: vec!["echo".into()],
             }],
         )
-        .with_required_tools(["node"]);
+        .with_required_tools(["node"])
+        .with_required_env([EnvRequirement::secret("SAMPLE_SECRET")]);
         runner.run_plan(&plan, true).unwrap();
         assert!(runner.checked_tools.borrow().is_empty());
+        assert!(runner.checked_env.borrow().is_empty());
         assert!(runner.commands.borrow().is_empty());
     }
 }

@@ -1,6 +1,7 @@
 use crate::container_engine::ContainerEngine;
 use crate::error::CompanyCiError;
 use crate::impact::{infer_areas, Area};
+use crate::repo_layout::RepoLayout;
 use std::env;
 
 #[derive(Debug, Clone)]
@@ -8,10 +9,12 @@ pub struct ExecutionContext {
     pub company_ci_binary: String,
     pub container_engine: ContainerEngine,
     pub impacted_areas: Vec<Area>,
+    pub repo_layout: RepoLayout,
 }
 
 impl ExecutionContext {
     pub fn detect() -> Result<Self, CompanyCiError> {
+        let repo_layout = RepoLayout::company_ci_lab();
         let changed_files = env::var("COMPANY_CI_CHANGED_FILES")
             .ok()
             .map(|value| {
@@ -37,7 +40,7 @@ impl ExecutionContext {
                 Area::Workflows,
             ]
         } else {
-            infer_areas(changed_files.iter().map(String::as_str))
+            infer_areas(&repo_layout, changed_files.iter().map(String::as_str))
         };
 
         let company_ci_binary = env::current_exe()
@@ -51,6 +54,7 @@ impl ExecutionContext {
             company_ci_binary,
             container_engine: ContainerEngine::detect()?,
             impacted_areas,
+            repo_layout,
         })
     }
 
@@ -76,6 +80,7 @@ mod tests {
                 Area::Deploy,
                 Area::Tooling,
             ],
+            repo_layout: RepoLayout::company_ci_lab(),
         };
         assert!(context.affects(Area::NextWeb));
         assert!(context.affects(Area::JavaLib));

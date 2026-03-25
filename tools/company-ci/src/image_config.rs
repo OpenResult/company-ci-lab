@@ -1,3 +1,4 @@
+use crate::error::CompanyCiError;
 use std::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,21 +52,21 @@ impl ImageProfile {
                 namespace: "company-ci",
                 tag: "dev",
                 registry_username: Some("admin"),
-                registry_password_file: Some("testbeds/repo/nexus/.runtime/admin.password"),
+                registry_password_file: Some("testbeds/repository/.runtime/admin.password"),
             },
         }
     }
 }
 
 impl ApplicationImage {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::NextWeb => "next-web",
             Self::SpringApi => "spring-api",
         }
     }
 
-    fn override_env(self) -> &'static str {
+    pub(crate) fn override_env(self) -> &'static str {
         match self {
             Self::NextWeb => "NEXT_WEB_IMAGE_REF",
             Self::SpringApi => "SPRING_API_IMAGE_REF",
@@ -123,6 +124,7 @@ impl ImageSettings {
         self.image_ref(app, &self.push_registry)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn pull_ref(&self, app: ApplicationImage) -> String {
         self.image_ref(app, &self.pull_registry)
     }
@@ -154,6 +156,32 @@ impl ImageSettings {
     pub fn has_registry_auth(&self) -> bool {
         self.registry_username.is_some()
             && (self.registry_password.is_some() || self.registry_password_file.is_some())
+    }
+
+    pub fn validate_publish_contract(&self, plan_name: &str) -> Result<(), CompanyCiError> {
+        let has_any_auth = self.registry_username.is_some()
+            || self.registry_password.is_some()
+            || self.registry_password_file.is_some();
+        if !has_any_auth {
+            return Ok(());
+        }
+
+        if self.registry_username.is_none() {
+            return Err(CompanyCiError::MissingSecretEnv {
+                plan: plan_name.to_string(),
+                name: "COMPANY_CI_IMAGE_REGISTRY_USERNAME".to_string(),
+            });
+        }
+
+        if self.registry_password.is_none() && self.registry_password_file.is_none() {
+            return Err(CompanyCiError::MissingEnvOrFile {
+                plan: plan_name.to_string(),
+                env_name: "COMPANY_CI_IMAGE_REGISTRY_PASSWORD".to_string(),
+                file_env_name: "COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE".to_string(),
+            });
+        }
+
+        Ok(())
     }
 
     fn image_ref(&self, app: ApplicationImage, registry: &str) -> String {
@@ -214,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn openshift_local_defaults_match_local_nexus_contract() {
+    fn openshift_local_defaults_match_local_repository_contract() {
         let settings = from_map(ImageProfile::OpenshiftLocal, &[]);
         assert_eq!(settings.push_registry(), "localhost:5002");
         assert_eq!(settings.pull_registry(), "host.crc.testing:5002");
@@ -223,7 +251,7 @@ mod tests {
         assert_eq!(settings.registry_username(), Some("admin"));
         assert_eq!(
             settings.registry_password_file(),
-            Some("testbeds/repo/nexus/.runtime/admin.password")
+            Some("testbeds/repository/.runtime/admin.password")
         );
         assert_eq!(
             settings.pull_ref(ApplicationImage::SpringApi),
@@ -257,6 +285,27 @@ mod tests {
         assert_eq!(
             settings.pull_ref(ApplicationImage::NextWeb),
             "registry.example.test/custom/next-web:qa"
+        );
+    }
+
+    #[test]
+    fn publish_contract_is_valid_without_registry_auth() {
+        let settings = from_map(ImageProfile::Local, &[]);
+        assert!(settings.validate_publish_contract("image-publish").is_ok());
+    }
+
+    #[test]
+    fn publish_contract_requires_password_when_username_is_present() {
+        let settings = from_map(
+            ImageProfile::Local,
+            &[("COMPANY_CI_IMAGE_REGISTRY_USERNAME", "robot")],
+        );
+        let error = settings
+            .validate_publish_contract("image-publish")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "missing required secret env or env file for plan image-publish: COMPANY_CI_IMAGE_REGISTRY_PASSWORD|COMPANY_CI_IMAGE_REGISTRY_PASSWORD_FILE"
         );
     }
 }
