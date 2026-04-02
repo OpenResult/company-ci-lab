@@ -31,3 +31,12 @@ Then they can call `company-ci deploy openshift` without adding `oc login`, repo
 With the local action in place, the workflow-facing interface is now the `company-ci` binary itself rather than `cargo run`.
 
 Future hosted publish workflows should stay thin as well: materialize tool-native auth files such as Maven `settings.xml`, export `MAVEN_SETTINGS_PATH`/`MAVEN_DEPLOY_URL`/`MAVEN_SERVER_ID`, and call an explicit contract-based command such as `company-ci publish maven-lib libs/java-lib`. The OpenShift e2e path remains a developer-oriented path; do not try to run it on GitHub-hosted runners unless the target cluster and repository are explicitly provisioned.
+
+## Container-image example
+
+For teams that prefer a prebuilt CI image, `DEMO.md` now includes a second GitHub Actions example that runs the job inside `registry.example.com/company-ci/company-ci:1.0.0`, keeps a single `actions/checkout` step, and shows a future-facing CLI contract for selecting toolchain versions with:
+
+- `company-ci java 21`
+- `company-ci node 24`
+
+That pattern moves both tool installation and version selection into the image/CLI boundary so the workflow YAML stays focused on checkout, credentials, and top-level `company-ci` commands.

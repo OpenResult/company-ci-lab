@@ -111,6 +111,42 @@ jobs:
           company-ci deploy openshift
 ```
 
+If you standardize on a prebuilt CI image such as `registry.example.com/company-ci/company-ci:1.0.0` that already contains `company-ci`, `oc`, the container client, and the language runtimes, the workflow can shrink further. In that model the image exposes tool-version selection through the CLI, so GitHub Actions only needs one checkout step plus the top-level `company-ci` calls.
+
+```yaml
+name: demo-openshift-deploy-container-image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.example.com/company-ci/company-ci:1.0.0
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select runtime versions
+        run: |
+          company-ci java 21
+          company-ci node 24
+      - name: Deploy with company-ci
+        env:
+          COMPANY_CI_OPENSHIFT_API_URL: ${{ secrets.OPENSHIFT_API_URL }}
+          COMPANY_CI_OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }}
+          COMPANY_CI_IMAGE_PUSH_REGISTRY: ${{ vars.IMAGE_PUSH_REGISTRY }}
+          COMPANY_CI_IMAGE_PULL_REGISTRY: ${{ vars.IMAGE_PULL_REGISTRY }}
+          COMPANY_CI_IMAGE_NAMESPACE: demo
+          COMPANY_CI_IMAGE_TAG: ${{ github.sha }}
+          COMPANY_CI_IMAGE_REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          COMPANY_CI_IMAGE_REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          company-ci verify
+          company-ci image build
+          company-ci image publish
+          company-ci deploy openshift
+```
+
 ### Jenkins
 
 ```groovy
